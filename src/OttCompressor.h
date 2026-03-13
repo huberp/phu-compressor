@@ -1,168 +1,173 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <juce_dsp/juce_dsp.h>
 
 /**
- * OttCompressor — single-band OTT-style (upward + downward) compressor.
+ * OttCompressor — single-band upward + downward compressor.
  *
- * Design: binary trigger → BallisticsFilter smoothing → gain application
- *
- *   level = |input|
- *
- *   downTrig = (level > downThreshLin) ? 1 : 0
- *   downEnv  = downBallistics.processSample(ch, downTrig)   // 0..1
- *
- *   upTrig   = (level < upThreshLin) ? 1 : 0
- *   upEnv    = upBallistics.processSample(ch, upTrig)       // 0..1
- *
- *   downGain = lerp(1, f_down(level), downEnv)              // <= 1
- *   upGain   = lerp(1, f_up(level),   upEnv)               // >= 1
- *
- *   output = input * downGain * upGain
- *
- * This class is intentionally free of plugin/UI dependencies (only <cmath>
- * and juce_dsp are used) so it can be copied into phu-splitter with minimal
- * edits.  See README for the reuse plan.
+ * Standard 4-stage architecture (two parallel gain paths):
+ *   1. Level Detector  — fast peak envelope follower gives smooth dB level from audio
+ *   2. Gain Computer   — two independent always-positive dB values:
+ *        downGrDb   = (envDb - downThresh) * (1 - 1/downRatio)  when envDb > downThresh, else 0
+ *        upBoostDb  = (upThresh - envDb)   * (1 - 1/upRatio)    when envDb < upThresh,   else 0
+ *   3. Ballistics      — two independent smoothers:
+ *        downBallistics: JUCE BallisticsFilter on downGrDb (attack/release = downAttack/downRelease)
+ *        upBallistics:   manual one-pole on upBoostDb with a special rule:
+ *                          - when envDb > downThresh (compression active), the boost releases at
+ *                            the downAttack rate instead of upRelease. This ensures the residual
+ *                            boost from a previous quiet section does not reduce effective GR
+ *                            when a loud peak arrives.
+ *   4. Apply Gain      — totalGainDb = smoothedBoost - smoothedGR
+ *                        output = input * dBtoLinear(totalGainDb)
  */
 template <typename SampleType>
 class OttCompressor {
   public:
     OttCompressor() = default;
 
-    // -------------------------------------------------------------------------
-    // Lifecycle
-    // -------------------------------------------------------------------------
-
     void prepare(const juce::dsp::ProcessSpec& spec) {
         sampleRate = static_cast<SampleType>(spec.sampleRate);
+        expFactor = SampleType(-2.0) * SampleType(juce::MathConstants<double>::pi)
+                    * SampleType(1000.0) / sampleRate;
+
+        // Level detector: fast peak envelope follower (fixed internal times)
+        levelDetector.prepare(spec);
+        levelDetector.setAttackTime(SampleType(0.01));  // near-instant peak tracking
+        levelDetector.setReleaseTime(SampleType(50.0)); // smooth envelope decay
+
         downBallistics.prepare(spec);
-        upBallistics.prepare(spec);
-        applyAttackRelease();
+        updateCoefficients();
         reset();
     }
 
     void reset() {
+        levelDetector.reset();
         downBallistics.reset();
-        upBallistics.reset();
+        for (auto& v : smoothedUp) v = SampleType(0);
     }
 
     // -------------------------------------------------------------------------
     // Parameter setters
     // -------------------------------------------------------------------------
 
-    void setDownThresholdDb(SampleType dB) {
-        downThreshLin = dbToLinear(dB);
-    }
+    void setDownThresholdDb(SampleType dB) { downThreshDb = dB; }
+    void setDownRatio(SampleType r) { downRatio = std::max(r, SampleType(1)); }
+    void setUpThresholdDb(SampleType dB) { upThreshDb = dB; }
+    void setUpRatio(SampleType r) { upRatio = std::max(r, SampleType(1)); }
 
-    void setDownRatio(SampleType ratio) {
-        downRatio = (ratio > SampleType(1)) ? ratio : SampleType(1);
-    }
-
-    void setUpThresholdDb(SampleType dB) {
-        upThreshLin = dbToLinear(dB);
-    }
-
-    void setUpRatio(SampleType ratio) {
-        upRatio = (ratio > SampleType(1)) ? ratio : SampleType(1);
-    }
-
-    void setAttackMs(SampleType ms) {
-        attackMs = ms;
-        applyAttackRelease();
-    }
-
-    void setReleaseMs(SampleType ms) {
-        releaseMs = ms;
-        applyAttackRelease();
-    }
+    void setDownAttackMs(SampleType ms) { downAttackMs = ms; downBallistics.setAttackTime(ms); updateCoefficients(); }
+    void setDownReleaseMs(SampleType ms) { downReleaseMs = ms; downBallistics.setReleaseTime(ms); }
+    void setUpAttackMs(SampleType ms) { upAttackMs = ms; updateCoefficients(); }
+    void setUpReleaseMs(SampleType ms) { upReleaseMs = ms; updateCoefficients(); }
 
     // -------------------------------------------------------------------------
-    // Per-sample processing (stereo-capable via channel index)
+    // Per-sample processing
     // -------------------------------------------------------------------------
 
     SampleType processSample(int channel, SampleType input) {
-        const SampleType level = std::abs(input);
+        return processSampleWithGR(channel, input).output;
+    }
 
-        // --- Downward compression (reduce loud signals above downThreshLin) ---
-        const SampleType downTrig = (level > downThreshLin) ? SampleType(1) : SampleType(0);
-        const SampleType downEnv = downBallistics.processSample(channel, downTrig);
+    struct Result {
+        SampleType output;
+        SampleType totalGain;
+    };
 
-        // --- Upward compression (boost quiet signals below upThreshLin) ---
-        const SampleType upTrig = (level < upThreshLin) ? SampleType(1) : SampleType(0);
-        const SampleType upEnv = upBallistics.processSample(channel, upTrig);
+    Result processSampleWithGR(int channel, SampleType input) {
+        // Stage 1: Level detector — smooth envelope from audio
+        const SampleType envelope = levelDetector.processSample(channel, input);
+        const SampleType envDb = linearToDb(envelope);
 
-        // --- Compute "full effect" target gains ---
-        const SampleType downTargetGain = computeDownGain(level);
-        const SampleType upTargetGain = computeUpGain(level);
+        const bool inCompressionZone = (envDb > downThreshDb);
 
-        // --- Blend between unity and target using smoothed envelope ---
-        const SampleType downGain = lerp(SampleType(1), downTargetGain, downEnv);
-        const SampleType upGain = lerp(SampleType(1), upTargetGain, upEnv);
+        // Stage 2: Gain computers — independent, always-positive dB values
+        const SampleType downGrDb = inCompressionZone
+            ? (envDb - downThreshDb) * (SampleType(1) - SampleType(1) / downRatio)
+            : SampleType(0);
 
-        return input * downGain * upGain;
+        const SampleType upBoostTarget = (!inCompressionZone && envDb < upThreshDb && envelope > SampleType(0))
+            ? (upThreshDb - envDb) * (SampleType(1) - SampleType(1) / upRatio)
+            : SampleType(0);
+
+        // Stage 3a: Downward ballistics — JUCE BallisticsFilter on always-positive GR dB
+        const SampleType smoothedGR = downBallistics.processSample(channel, downGrDb);
+
+        // Stage 3b: Upward ballistics — manual one-pole
+        //   Normal: upAttack when rising, upRelease when falling.
+        //   Compression zone: use downAttack coeff to release boost in sync with
+        //   compression onset, preventing residual boost from offsetting GR.
+        {
+            const SampleType prev = smoothedUp[channel];
+            SampleType coeff;
+            if (upBoostTarget > prev) {
+                coeff = upAttackCoeff;
+            } else if (inCompressionZone) {
+                coeff = downAttackCoeff; // fast release — sync with compression attack
+            } else {
+                coeff = upReleaseCoeff;
+            }
+            smoothedUp[channel] = upBoostTarget + coeff * (prev - upBoostTarget);
+        }
+
+        // Stage 4: Apply combined gain
+        const SampleType totalGainDb = smoothedUp[channel] - smoothedGR;
+        const SampleType totalGain = dbToLinear(totalGainDb);
+        return { input * totalGain, totalGain };
     }
 
   private:
-    // -------------------------------------------------------------------------
-    // Gain computation helpers
-    // -------------------------------------------------------------------------
-
-    /** Downward compressor gain: reduces gain for signals above threshold.
-     *  Uses ratio-based power-law mapping; returns a value in (0, 1]. */
-    SampleType computeDownGain(SampleType level) const {
-        if (level <= downThreshLin || downThreshLin <= SampleType(0))
-            return SampleType(1);
-
-        // gain = (threshold / level) ^ (1 - 1/ratio)
-        const SampleType exponent = SampleType(1) - SampleType(1) / downRatio;
-        return std::pow(downThreshLin / level, exponent);
+    static SampleType linearToDb(SampleType linear) {
+        constexpr SampleType floor = SampleType(-120);
+        return (linear > SampleType(0))
+                   ? std::max(SampleType(20) * std::log10(linear), floor)
+                   : floor;
     }
-
-    /** Upward compressor gain: boosts gain for signals below threshold.
-     *  Uses reciprocal ratio-based mapping; returns a value in [1, ∞). */
-    SampleType computeUpGain(SampleType level) const {
-        if (level >= upThreshLin || level <= SampleType(0))
-            return SampleType(1);
-
-        // gain = (threshold / level) ^ (1 - 1/ratio)
-        const SampleType exponent = SampleType(1) - SampleType(1) / upRatio;
-        return std::pow(upThreshLin / level, exponent);
-    }
-
-    // -------------------------------------------------------------------------
-    // Utilities
-    // -------------------------------------------------------------------------
 
     static SampleType dbToLinear(SampleType dB) {
         return std::pow(SampleType(10), dB / SampleType(20));
     }
 
-    static SampleType lerp(SampleType a, SampleType b, SampleType t) {
-        return a + t * (b - a);
+    // Same one-pole formula as JUCE BallisticsFilter
+    SampleType msToCoeff(SampleType timeMs) const {
+        return (timeMs < SampleType(0.001))
+                   ? SampleType(0)
+                   : static_cast<SampleType>(std::exp(expFactor / timeMs));
     }
 
-    void applyAttackRelease() {
-        downBallistics.setAttackTime(attackMs);
-        downBallistics.setReleaseTime(releaseMs);
-        upBallistics.setAttackTime(attackMs);
-        upBallistics.setReleaseTime(releaseMs);
+    void updateCoefficients() {
+        downAttackCoeff = msToCoeff(downAttackMs);
+        upAttackCoeff   = msToCoeff(upAttackMs);
+        upReleaseCoeff  = msToCoeff(upReleaseMs);
     }
 
     // -------------------------------------------------------------------------
     // State
     // -------------------------------------------------------------------------
 
-    SampleType sampleRate{SampleType(44100)};
-    SampleType attackMs{SampleType(10)};
-    SampleType releaseMs{SampleType(100)};
+    SampleType sampleRate    { SampleType(44100) };
+    SampleType expFactor     { SampleType(0) };
 
-    SampleType downThreshLin{SampleType(1)}; // -0 dB default
-    SampleType downRatio{SampleType(4)};
+    SampleType downAttackMs  { SampleType(10) };
+    SampleType downReleaseMs { SampleType(100) };
+    SampleType upAttackMs    { SampleType(10) };
+    SampleType upReleaseMs   { SampleType(100) };
 
-    SampleType upThreshLin{SampleType(0.1)}; // ~ -20 dB default
-    SampleType upRatio{SampleType(4)};
+    SampleType downThreshDb  { SampleType(0) };
+    SampleType downRatio     { SampleType(4) };
+    SampleType upThreshDb    { SampleType(-30) };
+    SampleType upRatio       { SampleType(4) };
 
+    // Precomputed one-pole coefficients (JUCE BallisticsFilter formula)
+    SampleType downAttackCoeff { SampleType(0) };
+    SampleType upAttackCoeff   { SampleType(0) };
+    SampleType upReleaseCoeff  { SampleType(0) };
+
+    // Internal fast envelope follower (fixed, not user-controlled)
+    juce::dsp::BallisticsFilter<SampleType> levelDetector;
+    // Downward GR: JUCE BallisticsFilter (always-positive GR dB)
     juce::dsp::BallisticsFilter<SampleType> downBallistics;
-    juce::dsp::BallisticsFilter<SampleType> upBallistics;
+    // Upward boost: manual one-pole (releases fast when compression is active)
+    SampleType smoothedUp[2] = { SampleType(0), SampleType(0) };
 };

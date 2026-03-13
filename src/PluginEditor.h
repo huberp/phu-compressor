@@ -1,9 +1,11 @@
 #pragma once
 
+#include "CompressorDisplay.h"
 #include "PluginProcessor.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
-class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor {
+class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                          private juce::Timer {
   public:
     PhuCompressorAudioProcessorEditor(PhuCompressorAudioProcessor&);
     ~PhuCompressorAudioProcessorEditor() override;
@@ -12,23 +14,32 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor {
     void resized() override;
 
   private:
+    void timerCallback() override;
+
     PhuCompressorAudioProcessor& audioProcessor;
+
+    // Unified display panel
+    CompressorDisplay compressorDisplay;
 
     // Parameter sliders
     juce::Slider downThreshSlider;
     juce::Slider downRatioSlider;
     juce::Slider upThreshSlider;
     juce::Slider upRatioSlider;
-    juce::Slider attackSlider;
-    juce::Slider releaseSlider;
+    juce::Slider downAttackSlider;
+    juce::Slider downReleaseSlider;
+    juce::Slider upAttackSlider;
+    juce::Slider upReleaseSlider;
 
     // Labels
     juce::Label downThreshLabel;
     juce::Label downRatioLabel;
     juce::Label upThreshLabel;
     juce::Label upRatioLabel;
-    juce::Label attackLabel;
-    juce::Label releaseLabel;
+    juce::Label downAttackLabel;
+    juce::Label downReleaseLabel;
+    juce::Label upAttackLabel;
+    juce::Label upReleaseLabel;
 
     // APVTS attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -36,8 +47,10 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor {
     SliderAttachment downRatioAttachment;
     SliderAttachment upThreshAttachment;
     SliderAttachment upRatioAttachment;
-    SliderAttachment attackAttachment;
-    SliderAttachment releaseAttachment;
+    SliderAttachment downAttackAttachment;
+    SliderAttachment downReleaseAttachment;
+    SliderAttachment upAttackAttachment;
+    SliderAttachment upReleaseAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessorEditor)
 };

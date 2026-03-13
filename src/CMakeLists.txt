@@ -15,6 +15,8 @@ target_sources(phu-compressor PRIVATE
     PluginEditor.cpp
     PluginEditor.h
     OttCompressor.h
+    CompressorDisplay.cpp
+    CompressorDisplay.h
 )
 
 target_compile_definitions(phu-compressor PUBLIC
@@ -31,6 +33,7 @@ target_link_libraries(phu-compressor
     PRIVATE
         juce::juce_audio_processors
         juce::juce_dsp
+        CompressorLib
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
