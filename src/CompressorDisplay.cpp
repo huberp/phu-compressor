@@ -13,11 +13,12 @@ static const juce::Colour kGridColour{juce::Colours::white.withAlpha(0.12f)};
 static const juce::Colour kGridTextColour{juce::Colours::white.withAlpha(0.4f)};
 static const juce::Colour kTransferCurveColour{0xFF00CCFFu};   // Cyan
 static const juce::Colour kUnityLineColour{juce::Colours::white.withAlpha(0.2f)};
-static const juce::Colour kWaveformColour{0xFF00AADDu};        // Blue
-static const juce::Colour kGrFillColour{0xFFFF8800u};          // Orange/amber (attenuation)
-static const juce::Colour kGrLineColour{0xFFFFAA33u};          // Lighter orange
-static const juce::Colour kBoostFillColour{0xFF44CC44u};       // Green (upward boost)
-static const juce::Colour kBoostLineColour{0xFF66EE66u};       // Lighter green
+static const juce::Colour kWaveformColour{0xFF3D6B6Bu};        // Muted teal — subtle backdrop
+static const juce::Colour kGrFillColour{0xFFDD7700u};          // Deep amber (attenuation)
+static const juce::Colour kGrLineColour{0xFFFF9933u};          // Bright orange stroke
+static const juce::Colour kBoostFillColour{0xFFBB44AAu};       // Soft magenta (upward boost)
+static const juce::Colour kBoostLineColour{0xFFDD66CCu};       // Bright magenta stroke
+static const juce::Colour kDetectorCurveColour{0xFFEEFFFFu};   // Near-white cyan — detector level
 static const juce::Colour kDownThreshHandleColour{0xFFFF4444u}; // Red
 static const juce::Colour kDownRatioHandleColour{0xFFFF8888u};  // Light red
 static const juce::Colour kUpThreshHandleColour{0xFF44FF44u};   // Green
@@ -152,7 +153,8 @@ void CompressorDisplay::readFromRing(const RingBuffer& ring, float* dest, int co
 // ─────────────────────────────────────────────────────────────────────────
 
 void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
-                                         AudioSampleFifo<2>& grFifo) {
+                                         AudioSampleFifo<2>& grFifo,
+                                         AudioSampleFifo<2>& detectorFifo) {
     // Pull input samples (stereo → mono → dB → ring)
     {
         const int avail = inputFifo.getNumAvailable();
@@ -189,6 +191,21 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
                 tempL[static_cast<size_t>(i)] = juce::jlimit(-kGrMaxDb, 20.0f, db);
             }
             appendToRing(grRing, tempL.data(), got);
+        }
+    }
+
+    // Pull detector level samples (stereo → mono → already in dB → ring)
+    {
+        const int avail = detectorFifo.getNumAvailable();
+        const int toPull = juce::jmin(avail, kMaxPullSamples);
+        if (toPull > 0) {
+            float* ch[2] = {tempL.data(), tempR.data()};
+            int got = detectorFifo.pull(ch, toPull);
+            for (int i = 0; i < got; ++i) {
+                float mono = (tempL[static_cast<size_t>(i)] + tempR[static_cast<size_t>(i)]) * 0.5f;
+                tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, mono);
+            }
+            appendToRing(detectorRing, tempL.data(), got);
         }
     }
 }
@@ -246,7 +263,10 @@ void CompressorDisplay::paint(juce::Graphics& g) {
 
     paintTransferCurve(g, tcArea);
     paintWaveform(g, wfArea);
-    paintGainReduction(g, wfArea);
+    if (showDetectorCurve)
+        paintDetectorCurve(g, wfArea);
+    if (showDownGr || showUpGr)
+        paintGainReduction(g, wfArea);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -390,7 +410,7 @@ void CompressorDisplay::paintTransferCurve(juce::Graphics& g,
 
     // Labels
     g.setColour(kGridTextColour);
-    g.setFont(juce::Font(9.0f));
+    g.setFont(juce::FontOptions(9.0f));
     auto labelArea = area;
     g.drawText("IN (dB)", labelArea.removeFromBottom(12), juce::Justification::centred);
 }
@@ -403,7 +423,7 @@ void CompressorDisplay::paintDbGrid(juce::Graphics& g,
                                      const juce::Rectangle<int>& area,
                                      bool isTransferCurve) {
     const float dbSteps[] = {-6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f};
-    g.setFont(juce::Font(8.0f));
+    g.setFont(juce::FontOptions(8.0f));
 
     for (float db : dbSteps) {
         float norm = (db - kMinDb) / (kMaxDb - kMinDb);
@@ -482,6 +502,49 @@ void CompressorDisplay::paintWaveform(juce::Graphics& g,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Detector Curve (overlaid on waveform)
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintDetectorCurve(juce::Graphics& g,
+                                            const juce::Rectangle<int>& area) {
+    const int displaySamples = juce::jmin(
+        static_cast<int>(sampleRate * static_cast<double>(displayDurationMs) / 1000.0),
+        kRingSize);
+
+    readFromRing(detectorRing, paintBufDetector.data(), displaySamples);
+
+    const int w = area.getWidth();
+    if (w <= 0 || displaySamples <= 0)
+        return;
+
+    const float samplesPerPixel = static_cast<float>(displaySamples) / static_cast<float>(w);
+
+    juce::Path detPath;
+    for (int px = 0; px < w; ++px) {
+        const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
+        int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
+        endSamp = juce::jmin(endSamp, displaySamples);
+
+        // Use last sample in bin — detector data is already RMS-smoothed,
+        // so max-per-bin would add artificial spikiness
+        float db = (endSamp > startSamp)
+                       ? paintBufDetector[static_cast<size_t>(endSamp - 1)]
+                       : kMinDb;
+
+        float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+        float y = area.getBottom() - norm * area.getHeight();
+
+        if (px == 0)
+            detPath.startNewSubPath(static_cast<float>(area.getX()), y);
+        else
+            detPath.lineTo(static_cast<float>(area.getX() + px), y);
+    }
+
+    g.setColour(kDetectorCurveColour);
+    g.strokePath(detPath, juce::PathStrokeType(2.0f));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Gain Reduction
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -493,7 +556,7 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
 
     readFromRing(grRing, paintBufGR.data(), displaySamples);
 
-    const int w = area.getWidth();
+    const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
     if (w <= 0 || displaySamples <= 0)
         return;
 
@@ -504,8 +567,8 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
     // Boost region: bottom 30% of graph (0 dB at bottom edge, +kGrMaxDb going up)
     const float boostAreaHeight = area.getHeight() * 0.3f;
 
-    // Pre-compute average dB per pixel column
-    std::vector<float> avgDbPerPx(static_cast<size_t>(w), 0.0f);
+    // Pre-compute average dB per pixel column (using pre-allocated member buffer)
+    std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
     for (int px = 0; px < w; ++px) {
         const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
         int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
@@ -516,15 +579,16 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
             sum += paintBufGR[static_cast<size_t>(s)];
             ++count;
         }
-        avgDbPerPx[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
+        paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
     }
 
     // --- Attenuation (orange, from top) — negative dB values ---
+    if (showDownGr)
     {
         juce::Path attenPath;
         attenPath.startNewSubPath(static_cast<float>(area.getX()), static_cast<float>(area.getY()));
         for (int px = 0; px < w; ++px) {
-            float db = avgDbPerPx[static_cast<size_t>(px)];
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
             float attenDb = juce::jmin(db, 0.0f); // only negative part
             float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
             float y = area.getY() + norm * attenAreaHeight;
@@ -533,13 +597,13 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
         attenPath.lineTo(static_cast<float>(area.getRight()), static_cast<float>(area.getY()));
         attenPath.closeSubPath();
 
-        g.setColour(kGrFillColour.withAlpha(0.35f));
+        g.setColour(kGrFillColour.withAlpha(0.4f));
         g.fillPath(attenPath);
 
         // Stroke the bottom edge
         juce::Path attenLine;
         for (int px = 0; px < w; ++px) {
-            float db = avgDbPerPx[static_cast<size_t>(px)];
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
             float attenDb = juce::jmin(db, 0.0f);
             float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
             float y = area.getY() + norm * attenAreaHeight;
@@ -553,12 +617,13 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
     }
 
     // --- Boost (green, from bottom) — positive dB values ---
+    if (showUpGr)
     {
         const float bottom = static_cast<float>(area.getBottom());
         juce::Path boostPath;
         boostPath.startNewSubPath(static_cast<float>(area.getX()), bottom);
         for (int px = 0; px < w; ++px) {
-            float db = avgDbPerPx[static_cast<size_t>(px)];
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
             float boostDb = juce::jmax(db, 0.0f); // only positive part
             float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
             float y = bottom - norm * boostAreaHeight;
@@ -567,13 +632,13 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
         boostPath.lineTo(static_cast<float>(area.getRight()), bottom);
         boostPath.closeSubPath();
 
-        g.setColour(kBoostFillColour.withAlpha(0.3f));
+        g.setColour(kBoostFillColour.withAlpha(0.35f));
         g.fillPath(boostPath);
 
         // Stroke the top edge
         juce::Path boostLine;
         for (int px = 0; px < w; ++px) {
-            float db = avgDbPerPx[static_cast<size_t>(px)];
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
             float boostDb = juce::jmax(db, 0.0f);
             float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
             float y = bottom - norm * boostAreaHeight;
@@ -587,13 +652,17 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
     }
 
     // Labels
-    g.setFont(juce::Font(8.0f));
-    g.setColour(kGrLineColour.withAlpha(0.6f));
-    g.drawText("GR", area.getX() + area.getWidth() - 20, area.getY() + 2, 18, 10,
-               juce::Justification::centredRight);
-    g.setColour(kBoostLineColour.withAlpha(0.6f));
-    g.drawText("UP", area.getX() + area.getWidth() - 20, area.getBottom() - 12, 18, 10,
-               juce::Justification::centredRight);
+    g.setFont(juce::FontOptions(8.0f));
+    if (showDownGr) {
+        g.setColour(kGrLineColour.withAlpha(0.6f));
+        g.drawText("GR", area.getX() + area.getWidth() - 20, area.getY() + 2, 18, 10,
+                   juce::Justification::centredRight);
+    }
+    if (showUpGr) {
+        g.setColour(kBoostLineColour.withAlpha(0.6f));
+        g.drawText("UP", area.getX() + area.getWidth() - 20, area.getBottom() - 12, 18, 10,
+                   juce::Justification::centredRight);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

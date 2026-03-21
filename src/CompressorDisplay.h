@@ -19,9 +19,10 @@ using phu::audio::AudioSampleFifo;
 class CompressorDisplay : public juce::Component,
                           public juce::AudioProcessorValueTreeState::Listener {
   public:
-    // Ring buffer capacity: supports up to ~1000ms at 96kHz
-    static constexpr int kRingSize = 96000;
+    // Ring buffer capacity: supports up to 4000ms at 96kHz
+    static constexpr int kRingSize = 384000;
     static constexpr int kMaxPullSamples = 8192;
+    static constexpr int kMaxDisplayWidth = 4096;
 
     // dB range for all displays
     static constexpr float kMinDb = -60.0f;
@@ -29,11 +30,11 @@ class CompressorDisplay : public juce::Component,
     static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
 
     // Musical time options (in beats)
-    static constexpr int kNumTimeOptions = 6;
+    static constexpr int kNumTimeOptions = 5;
     static constexpr float kBeatFractions[kNumTimeOptions] = {
-        0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+        0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
     static constexpr const char* kBeatLabels[kNumTimeOptions] = {
-        "1/8", "1/4", "1/2", "1", "2", "4"};
+        "1/2", "1", "2", "4", "8"};
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
@@ -42,9 +43,15 @@ class CompressorDisplay : public juce::Component,
     void setBPM(double bpm);
     void setDisplayDuration(float durationMs);
 
+    /** Toggle visibility of individual overlay curves. */
+    void setShowDetectorCurve(bool show) { showDetectorCurve = show; }
+    void setShowDownGr(bool show) { showDownGr = show; }
+    void setShowUpGr(bool show) { showUpGr = show; }
+
     /** Pull latest samples from FIFOs (call from editor timerCallback). */
     void updateFromFifos(AudioSampleFifo<2>& inputFifo,
-                         AudioSampleFifo<2>& grFifo);
+                         AudioSampleFifo<2>& grFifo,
+                         AudioSampleFifo<2>& detectorFifo);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -70,8 +77,9 @@ class CompressorDisplay : public juce::Component,
         int writePos = 0;
         int samplesWritten = 0;
     };
-    RingBuffer inputRing;  // input level in dB (mono)
-    RingBuffer grRing;     // gain reduction in dB (mono, negative values = compression)
+    RingBuffer inputRing;    // input level in dB (mono)
+    RingBuffer grRing;       // gain reduction in dB (mono, negative values = compression)
+    RingBuffer detectorRing; // detector level in dB (mono)
 
     // Temp pull buffers
     std::array<float, kMaxPullSamples> tempL{};
@@ -80,6 +88,8 @@ class CompressorDisplay : public juce::Component,
     // Paint read-out buffers
     std::array<float, kRingSize> paintBufInput{};
     std::array<float, kRingSize> paintBufGR{};
+    std::array<float, kRingSize> paintBufDetector{};
+    std::array<float, kMaxDisplayWidth> paintBufAvgDb{};
 
     // --- Transfer curve cached parameters ---
     float downThreshDb = -12.0f;
@@ -88,8 +98,13 @@ class CompressorDisplay : public juce::Component,
     float upRatio = 4.0f;
 
     // --- Musical time buttons ---
-    int selectedTimeIndex = 3; // default: 1 beat
+    int selectedTimeIndex = 1; // default: 1 beat
     std::array<juce::TextButton, kNumTimeOptions> timeButtons;
+
+    // --- Curve visibility flags ---
+    bool showDetectorCurve = true;
+    bool showDownGr = true;
+    bool showUpGr = true;
 
     // --- Draggable handle state ---
     enum class DragTarget { None, DownThresh, DownRatio, UpThresh, UpRatio };
@@ -114,6 +129,7 @@ class CompressorDisplay : public juce::Component,
 
     // --- Waveform + GR rendering ---
     void paintWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void paintDetectorCurve(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintDbGrid(juce::Graphics& g, const juce::Rectangle<int>& area, bool isTransferCurve);
 

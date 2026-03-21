@@ -5,11 +5,11 @@ static void setupSlider(juce::Slider& slider, juce::Label& label, const juce::St
                         juce::Component* parent) {
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centredLeft);
-    label.setFont(juce::Font(11.0f));
+    label.setFont(juce::FontOptions(11.0f));
     parent->addAndMakeVisible(label);
 
     slider.setSliderStyle(juce::Slider::LinearHorizontal);
-    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
     parent->addAndMakeVisible(slider);
 }
 
@@ -31,24 +31,117 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
       upAttackAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpAttack,
                          upAttackSlider),
       upReleaseAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpRelease,
-                          upReleaseSlider) {
-    setupSlider(downThreshSlider, downThreshLabel, "Down Thresh (dB)", this);
-    setupSlider(downRatioSlider, downRatioLabel, "Down Ratio", this);
-    setupSlider(downAttackSlider, downAttackLabel, "Down Attack (ms)", this);
-    setupSlider(downReleaseSlider, downReleaseLabel, "Down Release (ms)", this);
-    setupSlider(upThreshSlider, upThreshLabel, "Up Thresh (dB)", this);
-    setupSlider(upRatioSlider, upRatioLabel, "Up Ratio", this);
-    setupSlider(upAttackSlider, upAttackLabel, "Up Attack (ms)", this);
-    setupSlider(upReleaseSlider, upReleaseLabel, "Up Release (ms)", this);
+                          upReleaseSlider),
+      detectorTypeAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamDetectorType,
+                             detectorTypeCombo),
+      rmsWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsWindowMs,
+                          rmsWindowSlider),
+      rmsSyncAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsSyncMode,
+                        rmsSyncToggle),
+      rmsBeatDivAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsBeatDiv,
+                           rmsBeatDivCombo),
+      peakWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamPeakWindowMs,
+                           peakWindowSlider) {
+    setupSlider(downThreshSlider, downThreshLabel, "Thresh (dB)", this);
+    setupSlider(downRatioSlider, downRatioLabel, "Ratio", this);
+    setupSlider(downAttackSlider, downAttackLabel, "Attack (ms)", this);
+    setupSlider(downReleaseSlider, downReleaseLabel, "Release (ms)", this);
+    setupSlider(upThreshSlider, upThreshLabel, "Thresh (dB)", this);
+    setupSlider(upRatioSlider, upRatioLabel, "Ratio", this);
+    setupSlider(upAttackSlider, upAttackLabel, "Attack (ms)", this);
+    setupSlider(upReleaseSlider, upReleaseLabel, "Release (ms)", this);
+
+    // Detector type combo
+    detectorTypeLabel.setText("Type", juce::dontSendNotification);
+    detectorTypeLabel.setJustificationType(juce::Justification::centredLeft);
+    detectorTypeLabel.setFont(juce::FontOptions(11.0f));
+    addAndMakeVisible(detectorTypeLabel);
+    detectorTypeCombo.addItem("RMS", 1);
+    detectorTypeCombo.addItem("Peak", 2);
+    addAndMakeVisible(detectorTypeCombo);
+
+    // RMS window slider
+    setupSlider(rmsWindowSlider, rmsWindowLabel, "Window (ms)", this);
+
+    // RMS sync toggle
+    rmsSyncToggle.setButtonText("Sync");
+    addAndMakeVisible(rmsSyncToggle);
+
+    // RMS beat division combo
+    rmsBeatDivLabel.setText("Beat Div", juce::dontSendNotification);
+    rmsBeatDivLabel.setJustificationType(juce::Justification::centredLeft);
+    rmsBeatDivLabel.setFont(juce::FontOptions(11.0f));
+    addAndMakeVisible(rmsBeatDivLabel);
+    rmsBeatDivCombo.addItem("1/8", 1);
+    rmsBeatDivCombo.addItem("1/4", 2);
+    rmsBeatDivCombo.addItem("1/2", 3);
+    rmsBeatDivCombo.addItem("1", 4);
+    rmsBeatDivCombo.addItem("2", 5);
+    rmsBeatDivCombo.addItem("4", 6);
+    addAndMakeVisible(rmsBeatDivCombo);
+
+    // Peak window slider
+    setupSlider(peakWindowSlider, peakWindowLabel, "Window (ms)", this);
+
+    // Curve visibility toggles
+    showDetectorToggle.setButtonText("Detector");
+    showDetectorToggle.setToggleState(true, juce::dontSendNotification);
+    showDetectorToggle.onClick = [this]() {
+        compressorDisplay.setShowDetectorCurve(showDetectorToggle.getToggleState());
+    };
+    addAndMakeVisible(showDetectorToggle);
+
+    showDownGrToggle.setButtonText("Down GR");
+    showDownGrToggle.setToggleState(true, juce::dontSendNotification);
+    showDownGrToggle.onClick = [this]() {
+        compressorDisplay.setShowDownGr(showDownGrToggle.getToggleState());
+    };
+    addAndMakeVisible(showDownGrToggle);
+
+    showUpGrToggle.setButtonText("Up GR");
+    showUpGrToggle.setToggleState(true, juce::dontSendNotification);
+    showUpGrToggle.onClick = [this]() {
+        compressorDisplay.setShowUpGr(showUpGrToggle.getToggleState());
+    };
+    addAndMakeVisible(showUpGrToggle);
+
+    // Section group frames (like phu-splitter style)
+    downwardGroup.setText("Downward");
+    downwardGroup.setTextLabelPosition(juce::Justification::centredLeft);
+    addAndMakeVisible(downwardGroup);
+
+    upwardGroup.setText("Upward");
+    upwardGroup.setTextLabelPosition(juce::Justification::centredLeft);
+    addAndMakeVisible(upwardGroup);
+
+    detectorGroup.setText("Detector");
+    detectorGroup.setTextLabelPosition(juce::Justification::centredLeft);
+    addAndMakeVisible(detectorGroup);
 
     addAndMakeVisible(compressorDisplay);
 
-    setSize(720, 460);
+    updateDetectorControlVisibility();
+
+    setSize(800, 560);
     startTimerHz(60);
 }
 
 PhuCompressorAudioProcessorEditor::~PhuCompressorAudioProcessorEditor() {
     stopTimer();
+}
+
+void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
+    const int detType = detectorTypeCombo.getSelectedItemIndex(); // 0=RMS, 1=Peak
+    const bool isRms = (detType == 0);
+    const bool isSynced = rmsSyncToggle.getToggleState();
+
+    rmsWindowSlider.setVisible(isRms && !isSynced);
+    rmsWindowLabel.setVisible(isRms && !isSynced);
+    rmsSyncToggle.setVisible(isRms);
+    rmsBeatDivCombo.setVisible(isRms && isSynced);
+    rmsBeatDivLabel.setVisible(isRms && isSynced);
+    peakWindowSlider.setVisible(!isRms);
+    peakWindowLabel.setVisible(!isRms);
 }
 
 void PhuCompressorAudioProcessorEditor::timerCallback() {
@@ -61,47 +154,119 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
 
     // Pull data from FIFOs and repaint
     compressorDisplay.updateFromFifos(audioProcessor.getInputFifo(),
-                                       audioProcessor.getGainReductionFifo());
+                                       audioProcessor.getGainReductionFifo(),
+                                       audioProcessor.getDetectorFifo());
     compressorDisplay.repaint();
+
+    // Update detector control visibility based on current parameter values
+    updateDetectorControlVisibility();
 }
 
 void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(16.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(14.0f).withStyle("Bold"));
     g.drawText("PHU COMPRESSOR", getLocalBounds().removeFromTop(28),
                juce::Justification::centred, true);
 }
 
 void PhuCompressorAudioProcessorEditor::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds().reduced(10);
     area.removeFromTop(28); // Title
 
-    const int sliderColumnWidth = 220;
+    // ── Layout constants (aligned with phu-splitter style) ────────────────
+    constexpr int kRowHeight = 24;
+    constexpr int kRowGap = 3;
+    constexpr int kGroupPaddingV = 18;
+    constexpr int kGroupPaddingH = 10;
+    constexpr int kGroupSpacing = 8;
+    constexpr int kLabelWidth = 80;
+
+    const int sliderColumnWidth = 250;
     auto sliderArea = area.removeFromLeft(sliderColumnWidth);
 
-    const int rowHeight = 26;
-    const int labelWidth = 110;
-    const int gap = 3;
-
-    auto layoutRow = [&](juce::Label& label, juce::Slider& slider) {
-        auto row = sliderArea.removeFromTop(rowHeight);
-        label.setBounds(row.removeFromLeft(labelWidth));
-        slider.setBounds(row);
-        sliderArea.removeFromTop(gap);
+    // Helper: compute group height for N rows of controls
+    auto computeGroupHeight = [&](int numRows) {
+        int contentHeight = numRows * kRowHeight + (numRows > 1 ? (numRows - 1) * kRowGap : 0);
+        return 2 * kGroupPaddingV + contentHeight;
     };
 
-    layoutRow(downThreshLabel, downThreshSlider);
-    layoutRow(downRatioLabel, downRatioSlider);
-    layoutRow(downAttackLabel, downAttackSlider);
-    layoutRow(downReleaseLabel, downReleaseSlider);
-    layoutRow(upThreshLabel, upThreshSlider);
-    layoutRow(upRatioLabel, upRatioSlider);
-    layoutRow(upAttackLabel, upAttackSlider);
-    layoutRow(upReleaseLabel, upReleaseSlider);
+    // ── Downward group (4 rows) ──────────────────────────────────────────
+    auto downGroupArea = sliderArea.removeFromTop(computeGroupHeight(4));
+    downwardGroup.setBounds(downGroupArea);
+    {
+        auto content = downGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
+        auto layoutRow = [&](juce::Label& label, juce::Slider& slider) {
+            auto row = content.removeFromTop(kRowHeight);
+            label.setBounds(row.removeFromLeft(kLabelWidth));
+            slider.setBounds(row);
+            content.removeFromTop(kRowGap);
+        };
+        layoutRow(downThreshLabel, downThreshSlider);
+        layoutRow(downRatioLabel, downRatioSlider);
+        layoutRow(downAttackLabel, downAttackSlider);
+        layoutRow(downReleaseLabel, downReleaseSlider);
+    }
+    sliderArea.removeFromTop(kGroupSpacing);
 
-    // Display panel fills remaining space
+    // ── Upward group (4 rows) ────────────────────────────────────────────
+    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(4));
+    upwardGroup.setBounds(upGroupArea);
+    {
+        auto content = upGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
+        auto layoutRow = [&](juce::Label& label, juce::Slider& slider) {
+            auto row = content.removeFromTop(kRowHeight);
+            label.setBounds(row.removeFromLeft(kLabelWidth));
+            slider.setBounds(row);
+            content.removeFromTop(kRowGap);
+        };
+        layoutRow(upThreshLabel, upThreshSlider);
+        layoutRow(upRatioLabel, upRatioSlider);
+        layoutRow(upAttackLabel, upAttackSlider);
+        layoutRow(upReleaseLabel, upReleaseSlider);
+    }
+    sliderArea.removeFromTop(kGroupSpacing);
+
+    // ── Detector group (5 rows: type, rmsWindow, sync, beatDiv, peakWindow) ──
+    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
+    detectorGroup.setBounds(detGroupArea);
+    {
+        auto content = detGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
+        auto layoutSliderRow = [&](juce::Label& label, juce::Slider& slider) {
+            auto row = content.removeFromTop(kRowHeight);
+            label.setBounds(row.removeFromLeft(kLabelWidth));
+            slider.setBounds(row);
+            content.removeFromTop(kRowGap);
+        };
+        auto layoutComboRow = [&](juce::Label& label, juce::ComboBox& combo) {
+            auto row = content.removeFromTop(kRowHeight);
+            label.setBounds(row.removeFromLeft(kLabelWidth));
+            combo.setBounds(row);
+            content.removeFromTop(kRowGap);
+        };
+        layoutComboRow(detectorTypeLabel, detectorTypeCombo);
+        layoutSliderRow(rmsWindowLabel, rmsWindowSlider);
+        {
+            auto row = content.removeFromTop(kRowHeight);
+            rmsSyncToggle.setBounds(row.removeFromLeft(kLabelWidth));
+            content.removeFromTop(kRowGap);
+        }
+        layoutComboRow(rmsBeatDivLabel, rmsBeatDivCombo);
+        layoutSliderRow(peakWindowLabel, peakWindowSlider);
+    }
+    sliderArea.removeFromTop(kGroupSpacing);
+
+    // ── Curve visibility toggles ─────────────────────────────────────────
+    {
+        auto toggleRow = sliderArea.removeFromTop(kRowHeight);
+        int toggleWidth = toggleRow.getWidth() / 3;
+        showDetectorToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
+        showDownGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
+        showUpGrToggle.setBounds(toggleRow);
+    }
+
+    // ── Display panel fills remaining space ──────────────────────────────
     auto displayArea = area.withTrimmedLeft(8);
     compressorDisplay.setBounds(displayArea);
 }

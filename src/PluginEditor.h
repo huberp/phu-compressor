@@ -15,6 +15,7 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
 
   private:
     void timerCallback() override;
+    void updateDetectorControlVisibility();
 
     PhuCompressorAudioProcessor& audioProcessor;
 
@@ -41,8 +42,32 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::Label upAttackLabel;
     juce::Label upReleaseLabel;
 
+    // Detector controls
+    juce::ComboBox detectorTypeCombo;
+    juce::Label detectorTypeLabel;
+    juce::Slider rmsWindowSlider;
+    juce::Label rmsWindowLabel;
+    juce::ToggleButton rmsSyncToggle;
+    juce::ComboBox rmsBeatDivCombo;
+    juce::Label rmsBeatDivLabel;
+    juce::Slider peakWindowSlider;
+    juce::Label peakWindowLabel;
+
+    // Curve visibility toggles
+    juce::ToggleButton showDetectorToggle;
+    juce::ToggleButton showDownGrToggle;
+    juce::ToggleButton showUpGrToggle;
+
+    // Section group components (styled frames with titles)
+    juce::GroupComponent downwardGroup;
+    juce::GroupComponent upwardGroup;
+    juce::GroupComponent detectorGroup;
+
     // APVTS attachments
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
     SliderAttachment downThreshAttachment;
     SliderAttachment downRatioAttachment;
     SliderAttachment upThreshAttachment;
@@ -51,6 +76,12 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     SliderAttachment downReleaseAttachment;
     SliderAttachment upAttackAttachment;
     SliderAttachment upReleaseAttachment;
+
+    ComboBoxAttachment detectorTypeAttachment;
+    SliderAttachment rmsWindowAttachment;
+    ButtonAttachment rmsSyncAttachment;
+    ComboBoxAttachment rmsBeatDivAttachment;
+    SliderAttachment peakWindowAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessorEditor)
 };
