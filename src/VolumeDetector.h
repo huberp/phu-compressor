@@ -22,8 +22,8 @@ template <typename SampleType>
 class VolumeDetector {
   public:
     static constexpr int kMaxChannels = 2;
-    // Max window: 1 second at 96 kHz
-    static constexpr int kMaxWindowSamples = 96000;
+    // Max window: ~20 seconds at 96 kHz (supports 4 bars at ~48 BPM)
+    static constexpr int kMaxWindowSamples = 1920000;
 
     VolumeDetector() = default;
 

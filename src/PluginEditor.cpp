@@ -80,6 +80,13 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     rmsBeatDivCombo.addItem("4", 6);
     addAndMakeVisible(rmsBeatDivCombo);
 
+    // RMS beat div → ms readout
+    rmsBeatDivMsLabel.setText("", juce::dontSendNotification);
+    rmsBeatDivMsLabel.setJustificationType(juce::Justification::centredLeft);
+    rmsBeatDivMsLabel.setFont(juce::FontOptions(10.0f));
+    rmsBeatDivMsLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
+    addAndMakeVisible(rmsBeatDivMsLabel);
+
     // Peak window slider
     setupSlider(peakWindowSlider, peakWindowLabel, "Window (ms)", this);
 
@@ -152,6 +159,7 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
     rmsSyncToggle.setVisible(isRms);
     rmsBeatDivCombo.setVisible(isRms && isSynced);
     rmsBeatDivLabel.setVisible(isRms && isSynced);
+    rmsBeatDivMsLabel.setVisible(isRms && isSynced);
     peakWindowSlider.setVisible(!isRms);
     peakWindowLabel.setVisible(!isRms);
 }
@@ -178,6 +186,22 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
 
     // Update detector control visibility based on current parameter values
     updateDetectorControlVisibility();
+
+    // Update beat-div ms readout
+    if (rmsBeatDivMsLabel.isVisible()) {
+        const double bpm = syncGlobals.getBPM();
+        if (bpm > 0.0) {
+            const int beatIdx = juce::jlimit(0, PhuCompressorAudioProcessor::kNumBeatDivisions - 1,
+                                             rmsBeatDivCombo.getSelectedItemIndex());
+            const float beatFrac = PhuCompressorAudioProcessor::kBeatFractions[beatIdx];
+            const float windowMs = static_cast<float>(
+                (static_cast<double>(beatFrac) / bpm) * 60000.0);
+            rmsBeatDivMsLabel.setText(juce::String(windowMs, 1) + " ms",
+                                      juce::dontSendNotification);
+        } else {
+            rmsBeatDivMsLabel.setText("no BPM", juce::dontSendNotification);
+        }
+    }
 }
 
 void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
@@ -246,8 +270,8 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Detector group (5 rows: type, rmsWindow, sync, beatDiv, peakWindow) ──
-    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
+    // ── Detector group (6 rows: type, rmsWindow, sync, beatDiv, beatDivMs, peakWindow) ──
+    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(6));
     detectorGroup.setBounds(detGroupArea);
     {
         auto content = detGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -271,6 +295,12 @@ void PhuCompressorAudioProcessorEditor::resized() {
             content.removeFromTop(kRowGap);
         }
         layoutComboRow(rmsBeatDivLabel, rmsBeatDivCombo);
+        {
+            auto row = content.removeFromTop(kRowHeight);
+            row.removeFromLeft(kLabelWidth); // indent to align with combo
+            rmsBeatDivMsLabel.setBounds(row);
+            content.removeFromTop(kRowGap);
+        }
         layoutSliderRow(peakWindowLabel, peakWindowSlider);
     }
     sliderArea.removeFromTop(kGroupSpacing);

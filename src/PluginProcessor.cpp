@@ -84,7 +84,7 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             const float beatFrac = kBeatFractions[beatIdx];
             const float windowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
-            compressor.setDetectorWindowMs(juce::jlimit(1.0f, 500.0f, windowMs));
+            compressor.setDetectorWindowMs(std::max(1.0f, windowMs));
         } else {
             compressor.setDetectorWindowMs(rmsWindowMsPtr->load());
         }

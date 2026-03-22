@@ -50,6 +50,7 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::ToggleButton rmsSyncToggle;
     juce::ComboBox rmsBeatDivCombo;
     juce::Label rmsBeatDivLabel;
+    juce::Label rmsBeatDivMsLabel;  // shows computed ms for current beat div + BPM
     juce::Slider peakWindowSlider;
     juce::Label peakWindowLabel;
 

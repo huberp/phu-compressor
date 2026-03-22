@@ -73,10 +73,11 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     static constexpr const char* kParamRmsBeatDiv   = "rms_beat_div";
     static constexpr const char* kParamPeakWindowMs  = "peak_window_ms";
 
-    // Beat-division fractions (must match ComboBox item order)
+    // Beat-division fractions in beats (must match ComboBox item order)
+    // 1/8 = eighth note = 0.5 beats, 1/4 = quarter = 1 beat, etc.
     static constexpr int kNumBeatDivisions = 6;
     static constexpr float kBeatFractions[kNumBeatDivisions] = {
-        0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
+        0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f };
 
   private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
