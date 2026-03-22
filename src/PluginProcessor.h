@@ -2,10 +2,12 @@
 
 #include "OttCompressor.h"
 #include "audio/AudioSampleFifo.h"
+#include "audio/BeatSyncBuffer.h"
 #include "events/SyncGlobals.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
 using phu::audio::AudioSampleFifo;
+using phu::audio::BeatSyncBuffer;
 using phu::events::SyncGlobals;
 
 class PhuCompressorAudioProcessor : public juce::AudioProcessor {
@@ -43,6 +45,16 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }
     AudioSampleFifo<2>& getDetectorFifo() { return m_detectorFifo; }
     SyncGlobals& getSyncGlobals() { return m_syncGlobals; }
+
+    // Beat-sync buffer access (read-only pointers for UI)
+    const BeatSyncBuffer& getInputSyncBuffer() const { return m_inputSyncBuf; }
+    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }
+    const BeatSyncBuffer& getDetectorSyncBuffer() const { return m_detectorSyncBuf; }
+
+    /** Set the display range in beats (called from UI thread). */
+    void setDisplayRangeBeats(double beats) {
+        m_displayRangeBeats.store(beats, std::memory_order_relaxed);
+    }
 
     // Parameter IDs — compressor stages (8 existing)
     static constexpr const char* kParamDownThresh = "down_thresh";
@@ -102,6 +114,12 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
 
     // DAW state tracking (BPM, sample rate, transport)
     SyncGlobals m_syncGlobals;
+
+    // Beat-sync position-indexed buffers (written per-sample in processBlock)
+    BeatSyncBuffer m_inputSyncBuf;
+    BeatSyncBuffer m_grSyncBuf;
+    BeatSyncBuffer m_detectorSyncBuf;
+    std::atomic<double> m_displayRangeBeats{4.0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessor)
 };

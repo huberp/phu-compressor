@@ -2,6 +2,7 @@
 
 #include "EventSource.h"
 #include "SyncGlobalsListener.h"
+#include <atomic>
 #include <cstddef>
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -44,6 +45,11 @@ class SyncGlobals : public GlobalsEventSource {
     double msecPerBeat = 0.0;
     double samplesPerBeat = 0.0;
 
+    // PPQ tracking — blockStartPpq is audio-thread only,
+    // ppqEndOfBlock is atomically published for UI-thread reads.
+    double blockStartPpq = 0.0;
+    std::atomic<double> ppqEndOfBlock{0.0};
+
   public:
     SyncGlobals() = default;
     SyncGlobals(const SyncGlobals&) = delete;
@@ -59,6 +65,15 @@ class SyncGlobals : public GlobalsEventSource {
     double getBPM() const { return bpm; }
     double getSampleRate() const { return sampleRate; }
     bool isDawPlaying() const { return isPlaying; }
+
+    /** Audio-thread only: block-start PPQ set each processBlock by updateDAWGlobals. */
+    double getPpqBlockStart() const { return blockStartPpq; }
+
+    /** UI-thread safe: latest end-of-block PPQ (set by processor after processing). */
+    double getPpqEndOfBlock() const { return ppqEndOfBlock.load(std::memory_order_relaxed); }
+
+    /** Audio-thread only: call after processing to publish the end-of-block PPQ. */
+    void setPpqEndOfBlock(double ppq) { ppqEndOfBlock.store(ppq, std::memory_order_relaxed); }
 
     void updateSampleRate(double newSampleRate) {
         if (newSampleRate != sampleRate) {
@@ -104,6 +119,9 @@ class SyncGlobals : public GlobalsEventSource {
                     fireBPMChanged(event);
                 }
             }
+
+            if (auto ppqPos = positionInfo->getPpqPosition())
+                blockStartPpq = *ppqPos;
 
             bool newIsPlaying = positionInfo->getIsPlaying();
             if (newIsPlaying != isPlaying) {
