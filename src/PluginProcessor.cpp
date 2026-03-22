@@ -80,7 +80,7 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         const bool rmsSynced = rmsSyncModePtr->load() >= 0.5f;
         if (rmsSynced && m_syncGlobals.getBPM() > 0.0) {
             const int beatIdx = juce::jlimit(0, kNumBeatDivisions - 1,
-                                             static_cast<int>(rmsBeatDivPtr->load()));
+                                             juce::roundToInt(rmsBeatDivPtr->load()));
             const float beatFrac = kBeatFractions[beatIdx];
             const float windowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
