@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
     : AudioProcessor(BusesProperties()
@@ -41,6 +42,11 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_grBuffer.setSize(2, bufSize);
     m_detectorBuffer.setSize(2, bufSize);
     m_syncGlobals.updateSampleRate(sampleRate);
+
+    // Beat-sync buffers: 4096 bins for position-indexed display
+    m_inputSyncBuf.prepare(4096);
+    m_grSyncBuf.prepare(4096);
+    m_detectorSyncBuf.prepare(4096);
 }
 
 void PhuCompressorAudioProcessor::releaseResources() {
@@ -123,6 +129,39 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                 numChannels > 1 ? m_detectorBuffer.getReadPointer(1)
                                                 : m_detectorBuffer.getReadPointer(0)};
     m_detectorFifo.push(detPtrs, numSamples);
+
+    // Beat-sync buffer writes: per-sample PPQ → normalised position → bin
+    {
+        const double bpm = m_syncGlobals.getBPM();
+        const double blockPpq = m_syncGlobals.getPpqBlockStart();
+        const double displayRange = m_displayRangeBeats.load(std::memory_order_relaxed);
+
+        if (bpm > 0.0 && displayRange > 0.0) {
+            const double ppqPerSample = bpm / (60.0 * getSampleRate());
+            for (int i = 0; i < numSamples; ++i) {
+                const double ppq_i = blockPpq + i * ppqPerSample;
+                double normPos = std::fmod(ppq_i, displayRange) / displayRange;
+                if (normPos < 0.0) normPos += 1.0;
+
+                // Input: stereo → mono → abs → dB
+                const float monoIn = (outputPtrs[0][i] + outputPtrs[1][i]) * 0.5f;
+                const float absIn = std::abs(monoIn);
+                const float inDb = (absIn > 1e-10f) ? 20.0f * std::log10(absIn) : -60.0f;
+
+                // GR: stereo → min → dB
+                const float grLin = std::min(grPtrs[0][i], grPtrs[1][i]);
+                const float grDb = (grLin > 1e-10f) ? 20.0f * std::log10(grLin) : -24.0f;
+
+                // Detector: stereo → mono (already in dB)
+                const float detDb = (detPtrs[0][i] + detPtrs[1][i]) * 0.5f;
+
+                m_inputSyncBuf.write(normPos, inDb);
+                m_grSyncBuf.write(normPos, grDb);
+                m_detectorSyncBuf.write(normPos, detDb);
+            }
+            m_syncGlobals.setPpqEndOfBlock(blockPpq + numSamples * ppqPerSample);
+        }
+    }
 
     m_syncGlobals.finishRun(numSamples);
 }

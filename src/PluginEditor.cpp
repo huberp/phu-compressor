@@ -105,6 +105,13 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     };
     addAndMakeVisible(showUpGrToggle);
 
+    beatSyncToggle.setButtonText("Beat Sync");
+    beatSyncToggle.setToggleState(false, juce::dontSendNotification);
+    beatSyncToggle.onClick = [this]() {
+        compressorDisplay.setBeatSyncMode(beatSyncToggle.getToggleState());
+    };
+    addAndMakeVisible(beatSyncToggle);
+
     // Section group frames (like phu-splitter style)
     downwardGroup.setText("Downward");
     downwardGroup.setTextLabelPosition(juce::Justification::centredLeft);
@@ -119,6 +126,11 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     addAndMakeVisible(detectorGroup);
 
     addAndMakeVisible(compressorDisplay);
+
+    // Wire beat-sync buffer pointers
+    compressorDisplay.setBeatSyncBuffers(p.getInputSyncBuffer(),
+                                          p.getGRSyncBuffer(),
+                                          p.getDetectorSyncBuffer());
 
     updateDetectorControlVisibility();
 
@@ -151,6 +163,12 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
                                         ? syncGlobals.getSampleRate()
                                         : 48000.0);
     compressorDisplay.setBPM(syncGlobals.getBPM());
+
+    // Beat-sync: pass PPQ and keep display range in sync with processor
+    if (compressorDisplay.isBeatSyncMode()) {
+        compressorDisplay.setCurrentPpq(syncGlobals.getPpqEndOfBlock());
+        audioProcessor.setDisplayRangeBeats(compressorDisplay.getDisplayRangeBeats());
+    }
 
     // Pull data from FIFOs and repaint
     compressorDisplay.updateFromFifos(audioProcessor.getInputFifo(),
@@ -257,13 +275,14 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Curve visibility toggles ─────────────────────────────────────────
+    // ── Curve visibility toggles + beat sync ───────────────────────────────
     {
         auto toggleRow = sliderArea.removeFromTop(kRowHeight);
-        int toggleWidth = toggleRow.getWidth() / 3;
+        int toggleWidth = toggleRow.getWidth() / 4;
         showDetectorToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
         showDownGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
-        showUpGrToggle.setBounds(toggleRow);
+        showUpGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
+        beatSyncToggle.setBounds(toggleRow);
     }
 
     // ── Display panel fills remaining space ──────────────────────────────

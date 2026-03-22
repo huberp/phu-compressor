@@ -7,6 +7,7 @@ target_include_directories(CompressorLib INTERFACE
 
 target_sources(CompressorLib INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/AudioSampleFifo.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/audio/BeatSyncBuffer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/events/Event.h
     ${CMAKE_CURRENT_SOURCE_DIR}/events/EventSource.h
     ${CMAKE_CURRENT_SOURCE_DIR}/events/SyncGlobals.h

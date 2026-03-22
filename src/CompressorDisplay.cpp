@@ -59,8 +59,15 @@ CompressorDisplay::CompressorDisplay(juce::AudioProcessorValueTreeState& apvtsRe
         timeButtons[static_cast<size_t>(i)].setToggleState(
             i == selectedTimeIndex, juce::dontSendNotification);
         timeButtons[static_cast<size_t>(i)].onClick = [this, i]() {
-            selectedTimeIndex = i;
-            updateDisplayDurationFromBPM();
+            if (beatSyncMode) {
+                if (i < kNumBarOptions) {
+                    selectedBarIndex = i;
+                    displayRangeBeats = static_cast<double>(kBarBeats[i]);
+                }
+            } else {
+                selectedTimeIndex = i;
+                updateDisplayDurationFromBPM();
+            }
         };
         addAndMakeVisible(timeButtons[static_cast<size_t>(i)]);
     }
@@ -102,6 +109,41 @@ void CompressorDisplay::updateDisplayDurationFromBPM() {
             (static_cast<double>(beatFraction) / 120.0) * 60000.0);
     }
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, displayDurationMs);
+}
+
+void CompressorDisplay::setBeatSyncMode(bool enabled) {
+    if (beatSyncMode == enabled) return;
+    beatSyncMode = enabled;
+
+    // Swap time button labels
+    if (beatSyncMode) {
+        for (int i = 0; i < kNumTimeOptions; ++i) {
+            if (i < kNumBarOptions)
+                timeButtons[static_cast<size_t>(i)].setButtonText(kBarLabels[i]);
+            timeButtons[static_cast<size_t>(i)].setVisible(i < kNumBarOptions);
+        }
+        // Select first bar option
+        selectedBarIndex = 0;
+        displayRangeBeats = static_cast<double>(kBarBeats[0]);
+        timeButtons[0].setToggleState(true, juce::dontSendNotification);
+    } else {
+        for (int i = 0; i < kNumTimeOptions; ++i) {
+            timeButtons[static_cast<size_t>(i)].setButtonText(kBeatLabels[i]);
+            timeButtons[static_cast<size_t>(i)].setVisible(true);
+        }
+        timeButtons[static_cast<size_t>(selectedTimeIndex)].setToggleState(
+            true, juce::dontSendNotification);
+        updateDisplayDurationFromBPM();
+    }
+    repaint();
+}
+
+void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBuffer& input,
+                                            const BeatSyncBuffer& gr,
+                                            const BeatSyncBuffer& detector) {
+    inputSyncBuf = &input;
+    grSyncBuf = &gr;
+    detectorSyncBuf = &detector;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -262,11 +304,21 @@ void CompressorDisplay::paint(juce::Graphics& g) {
                        static_cast<float>(tcArea.getBottom()));
 
     paintTransferCurve(g, tcArea);
-    paintWaveform(g, wfArea);
-    if (showDetectorCurve)
-        paintDetectorCurve(g, wfArea);
-    if (showDownGr || showUpGr)
-        paintGainReduction(g, wfArea);
+
+    if (beatSyncMode) {
+        paintBeatSyncWaveform(g, wfArea);
+        if (showDetectorCurve)
+            paintBeatSyncDetector(g, wfArea);
+        if (showDownGr || showUpGr)
+            paintBeatSyncGainReduction(g, wfArea);
+        paintPlayheadCursor(g, wfArea);
+    } else {
+        paintWaveform(g, wfArea);
+        if (showDetectorCurve)
+            paintDetectorCurve(g, wfArea);
+        if (showDownGr || showUpGr)
+            paintGainReduction(g, wfArea);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -759,4 +811,241 @@ void CompressorDisplay::mouseDrag(const juce::MouseEvent& e) {
 
 void CompressorDisplay::mouseUp(const juce::MouseEvent&) {
     currentDrag = DragTarget::None;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Beat-sync Waveform (position-indexed)
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintBeatSyncWaveform(juce::Graphics& g,
+                                               const juce::Rectangle<int>& area) {
+    g.setColour(kBgColour);
+    g.fillRect(area);
+
+    paintDbGrid(g, area, false);
+    paintBeatGrid(g, area);
+
+    if (inputSyncBuf == nullptr || inputSyncBuf->size() <= 0)
+        return;
+
+    const int numBins = inputSyncBuf->size();
+    const float* bins = inputSyncBuf->data();
+    const int w = area.getWidth();
+    if (w <= 0)
+        return;
+
+    const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
+
+    g.setColour(kWaveformColour);
+    for (int px = 0; px < w; ++px) {
+        const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
+        int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
+        endBin = juce::jmin(endBin, numBins);
+
+        float maxDb = kMinDb;
+        for (int b = startBin; b < endBin; ++b)
+            maxDb = juce::jmax(maxDb, bins[b]);
+
+        float norm = juce::jlimit(0.0f, 1.0f, (maxDb - kMinDb) / (kMaxDb - kMinDb));
+        float barTop = area.getBottom() - norm * area.getHeight();
+        g.drawVerticalLine(area.getX() + px, barTop, static_cast<float>(area.getBottom()));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Beat-sync Detector Curve
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintBeatSyncDetector(juce::Graphics& g,
+                                               const juce::Rectangle<int>& area) {
+    if (detectorSyncBuf == nullptr || detectorSyncBuf->size() <= 0)
+        return;
+
+    const int numBins = detectorSyncBuf->size();
+    const float* bins = detectorSyncBuf->data();
+    const int w = area.getWidth();
+    if (w <= 0)
+        return;
+
+    const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
+
+    juce::Path detPath;
+    for (int px = 0; px < w; ++px) {
+        int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
+        endBin = juce::jmin(endBin, numBins);
+        float db = (endBin > 0) ? bins[endBin - 1] : kMinDb;
+        float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+        float y = area.getBottom() - norm * area.getHeight();
+
+        if (px == 0)
+            detPath.startNewSubPath(static_cast<float>(area.getX()), y);
+        else
+            detPath.lineTo(static_cast<float>(area.getX() + px), y);
+    }
+
+    g.setColour(kDetectorCurveColour);
+    g.strokePath(detPath, juce::PathStrokeType(2.0f));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Beat-sync Gain Reduction
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
+                                                    const juce::Rectangle<int>& area) {
+    if (grSyncBuf == nullptr || grSyncBuf->size() <= 0)
+        return;
+
+    const int numBins = grSyncBuf->size();
+    const float* bins = grSyncBuf->data();
+    const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
+    if (w <= 0)
+        return;
+
+    const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
+    const float attenAreaHeight = area.getHeight() * 0.3f;
+    const float boostAreaHeight = area.getHeight() * 0.3f;
+
+    // Pre-compute average dB per pixel column
+    std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
+    for (int px = 0; px < w; ++px) {
+        const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
+        int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
+        endBin = juce::jmin(endBin, numBins);
+        float sum = 0.0f;
+        int count = 0;
+        for (int b = startBin; b < endBin; ++b) {
+            sum += bins[b];
+            ++count;
+        }
+        paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
+    }
+
+    // Attenuation (orange, from top)
+    if (showDownGr) {
+        juce::Path attenPath;
+        attenPath.startNewSubPath(static_cast<float>(area.getX()), static_cast<float>(area.getY()));
+        for (int px = 0; px < w; ++px) {
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
+            float attenDb = juce::jmin(db, 0.0f);
+            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
+            float y = area.getY() + norm * attenAreaHeight;
+            attenPath.lineTo(static_cast<float>(area.getX() + px), y);
+        }
+        attenPath.lineTo(static_cast<float>(area.getRight()), static_cast<float>(area.getY()));
+        attenPath.closeSubPath();
+        g.setColour(kGrFillColour.withAlpha(0.4f));
+        g.fillPath(attenPath);
+
+        juce::Path attenLine;
+        for (int px = 0; px < w; ++px) {
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
+            float attenDb = juce::jmin(db, 0.0f);
+            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
+            float y = area.getY() + norm * attenAreaHeight;
+            if (px == 0)
+                attenLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else
+                attenLine.lineTo(static_cast<float>(area.getX() + px), y);
+        }
+        g.setColour(kGrLineColour);
+        g.strokePath(attenLine, juce::PathStrokeType(1.5f));
+    }
+
+    // Boost (magenta, from bottom)
+    if (showUpGr) {
+        const float bottom = static_cast<float>(area.getBottom());
+        juce::Path boostPath;
+        boostPath.startNewSubPath(static_cast<float>(area.getX()), bottom);
+        for (int px = 0; px < w; ++px) {
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
+            float boostDb = juce::jmax(db, 0.0f);
+            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
+            float y = bottom - norm * boostAreaHeight;
+            boostPath.lineTo(static_cast<float>(area.getX() + px), y);
+        }
+        boostPath.lineTo(static_cast<float>(area.getRight()), bottom);
+        boostPath.closeSubPath();
+        g.setColour(kBoostFillColour.withAlpha(0.35f));
+        g.fillPath(boostPath);
+
+        juce::Path boostLine;
+        for (int px = 0; px < w; ++px) {
+            float db = paintBufAvgDb[static_cast<size_t>(px)];
+            float boostDb = juce::jmax(db, 0.0f);
+            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
+            float y = bottom - norm * boostAreaHeight;
+            if (px == 0)
+                boostLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else
+                boostLine.lineTo(static_cast<float>(area.getX() + px), y);
+        }
+        g.setColour(kBoostLineColour);
+        g.strokePath(boostLine, juce::PathStrokeType(1.5f));
+    }
+
+    // Labels
+    g.setFont(juce::FontOptions(8.0f));
+    if (showDownGr) {
+        g.setColour(kGrLineColour.withAlpha(0.6f));
+        g.drawText("GR", area.getX() + area.getWidth() - 20, area.getY() + 2, 18, 10,
+                   juce::Justification::centredRight);
+    }
+    if (showUpGr) {
+        g.setColour(kBoostLineColour.withAlpha(0.6f));
+        g.drawText("UP", area.getX() + area.getWidth() - 20, area.getBottom() - 12, 18, 10,
+                   juce::Justification::centredRight);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Beat Grid (vertical lines at beat boundaries)
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintBeatGrid(juce::Graphics& g,
+                                       const juce::Rectangle<int>& area) {
+    if (displayRangeBeats <= 0.0)
+        return;
+
+    const int totalBeats = static_cast<int>(displayRangeBeats);
+    g.setColour(kGridColour);
+    g.setFont(juce::FontOptions(8.0f));
+
+    for (int beat = 1; beat < totalBeats; ++beat) {
+        float normX = static_cast<float>(beat) / static_cast<float>(totalBeats);
+        int x = area.getX() + static_cast<int>(normX * area.getWidth());
+        // Heavier line at bar boundaries (every 4 beats)
+        if (beat % 4 == 0)
+            g.setColour(kGridColour.brighter(0.3f));
+        else
+            g.setColour(kGridColour);
+        g.drawVerticalLine(x, static_cast<float>(area.getY()),
+                           static_cast<float>(area.getBottom()));
+
+        // Bar number at bar boundaries
+        if (beat % 4 == 0) {
+            g.setColour(kGridTextColour);
+            g.drawText(juce::String(beat / 4 + 1),
+                       x - 8, area.getBottom() - 14, 16, 12,
+                       juce::Justification::centred);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Playhead Cursor
+// ─────────────────────────────────────────────────────────────────────────
+
+void CompressorDisplay::paintPlayheadCursor(juce::Graphics& g,
+                                             const juce::Rectangle<int>& area) {
+    if (displayRangeBeats <= 0.0)
+        return;
+
+    double normPos = std::fmod(currentPpq, displayRangeBeats) / displayRangeBeats;
+    if (normPos < 0.0) normPos += 1.0;
+
+    int x = area.getX() + static_cast<int>(normPos * area.getWidth());
+    g.setColour(juce::Colours::white.withAlpha(0.7f));
+    g.drawVerticalLine(x, static_cast<float>(area.getY()),
+                       static_cast<float>(area.getBottom()));
 }

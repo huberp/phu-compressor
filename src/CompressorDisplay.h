@@ -1,10 +1,12 @@
 #pragma once
 
 #include "audio/AudioSampleFifo.h"
+#include "audio/BeatSyncBuffer.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using phu::audio::AudioSampleFifo;
+using phu::audio::BeatSyncBuffer;
 
 /**
  * CompressorDisplay — unified dB-based panel containing:
@@ -36,6 +38,12 @@ class CompressorDisplay : public juce::Component,
     static constexpr const char* kBeatLabels[kNumTimeOptions] = {
         "1/2", "1", "2", "4", "8"};
 
+    // Bar-mode time options (beat-sync display)
+    static constexpr int kNumBarOptions = 4;
+    static constexpr float kBarBeats[kNumBarOptions] = {4.0f, 8.0f, 16.0f, 32.0f};
+    static constexpr const char* kBarLabels[kNumBarOptions] = {
+        "1 bar", "2 bars", "4 bars", "8 bars"};
+
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
 
@@ -47,6 +55,22 @@ class CompressorDisplay : public juce::Component,
     void setShowDetectorCurve(bool show) { showDetectorCurve = show; }
     void setShowDownGr(bool show) { showDownGr = show; }
     void setShowUpGr(bool show) { showUpGr = show; }
+
+    /** Beat-sync mode: paint from position-indexed buffers instead of scrolling ring. */
+    void setBeatSyncMode(bool enabled);
+    bool isBeatSyncMode() const { return beatSyncMode; }
+
+    /** Point to the processor's beat-sync buffers (call once from editor constructor). */
+    void setBeatSyncBuffers(const BeatSyncBuffer& input,
+                            const BeatSyncBuffer& gr,
+                            const BeatSyncBuffer& detector);
+
+    /** Set current playhead PPQ for cursor position (call from timerCallback). */
+    void setCurrentPpq(double ppq) { currentPpq = ppq; }
+
+    /** Set the display range in beats (synchronised with processor). */
+    void setDisplayRangeBeats(double beats) { displayRangeBeats = beats; }
+    double getDisplayRangeBeats() const { return displayRangeBeats; }
 
     /** Pull latest samples from FIFOs (call from editor timerCallback). */
     void updateFromFifos(AudioSampleFifo<2>& inputFifo,
@@ -106,6 +130,15 @@ class CompressorDisplay : public juce::Component,
     bool showDownGr = true;
     bool showUpGr = true;
 
+    // --- Beat-sync state ---
+    bool beatSyncMode = false;
+    const BeatSyncBuffer* inputSyncBuf = nullptr;
+    const BeatSyncBuffer* grSyncBuf = nullptr;
+    const BeatSyncBuffer* detectorSyncBuf = nullptr;
+    double currentPpq = 0.0;
+    double displayRangeBeats = 4.0;
+    int selectedBarIndex = 0; // index into kBarBeats/kBarLabels
+
     // --- Draggable handle state ---
     enum class DragTarget { None, DownThresh, DownRatio, UpThresh, UpRatio };
     DragTarget currentDrag = DragTarget::None;
@@ -132,6 +165,13 @@ class CompressorDisplay : public juce::Component,
     void paintDetectorCurve(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintDbGrid(juce::Graphics& g, const juce::Rectangle<int>& area, bool isTransferCurve);
+
+    // --- Beat-sync rendering helpers ---
+    void paintBeatSyncWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void paintBeatSyncDetector(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void paintBeatSyncGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void paintBeatGrid(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void paintPlayheadCursor(juce::Graphics& g, const juce::Rectangle<int>& area);
 
     // --- Time selector ---
     void updateDisplayDurationFromBPM();

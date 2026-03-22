@@ -57,6 +57,7 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::ToggleButton showDetectorToggle;
     juce::ToggleButton showDownGrToggle;
     juce::ToggleButton showUpGrToggle;
+    juce::ToggleButton beatSyncToggle;
 
     // Section group components (styled frames with titles)
     juce::GroupComponent downwardGroup;
