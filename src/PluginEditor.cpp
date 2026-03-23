@@ -134,7 +134,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
 
     updateDetectorControlVisibility();
 
-    setSize(800, 560);
+    setSize(800, 590);
     startTimerHz(60);
 }
 
@@ -275,13 +275,19 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Curve visibility toggles + beat sync ───────────────────────────────
+    // ── Curve visibility toggles ─────────────────────────────────────────
     {
         auto toggleRow = sliderArea.removeFromTop(kRowHeight);
-        int toggleWidth = toggleRow.getWidth() / 4;
+        int toggleWidth = toggleRow.getWidth() / 3;
         showDetectorToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
         showDownGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
-        showUpGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
+        showUpGrToggle.setBounds(toggleRow);
+    }
+    sliderArea.removeFromTop(kRowGap);
+
+    // ── Beat sync toggle ─────────────────────────────────────────────────
+    {
+        auto toggleRow = sliderArea.removeFromTop(kRowHeight);
         beatSyncToggle.setBounds(toggleRow);
     }
 

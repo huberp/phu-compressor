@@ -289,10 +289,10 @@ PhuCompressorAudioProcessor::createParameterLayout() {
         juce::ParameterID{kParamRmsBeatDiv, 1}, "RMS Beat Div",
         juce::StringArray{"1/8", "1/4", "1/2", "1", "2", "4"}, 1));
 
-    // Peak window length: 0.1 ms to 50 ms, default 5 ms
+    // Peak window length: 1 ms to 50 ms, default 50 ms
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamPeakWindowMs, 1}, "Peak Window (ms)",
-        juce::NormalisableRange<float>(0.1f, 50.0f, 0.01f, 0.5f), 5.0f));
+        juce::NormalisableRange<float>(1.0f, 50.0f, 0.1f, 0.5f), 50.0f));
 
     return layout;
 }
