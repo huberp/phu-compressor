@@ -31,18 +31,12 @@ class CompressorDisplay : public juce::Component,
     static constexpr float kMaxDb = 0.0f;
     static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
 
-    // Musical time options (in beats)
+    // Musical time options (in beats) — used for both scrolling and beat-sync display
     static constexpr int kNumTimeOptions = 5;
     static constexpr float kBeatFractions[kNumTimeOptions] = {
         0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
     static constexpr const char* kBeatLabels[kNumTimeOptions] = {
         "1/2", "1", "2", "4", "8"};
-
-    // Bar-mode time options (beat-sync display)
-    static constexpr int kNumBarOptions = 4;
-    static constexpr float kBarBeats[kNumBarOptions] = {4.0f, 8.0f, 16.0f, 32.0f};
-    static constexpr const char* kBarLabels[kNumBarOptions] = {
-        "1 bar", "2 bars", "4 bars", "8 bars"};
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
@@ -137,7 +131,6 @@ class CompressorDisplay : public juce::Component,
     const BeatSyncBuffer* detectorSyncBuf = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
-    int selectedBarIndex = 0; // index into kBarBeats/kBarLabels
 
     // --- Draggable handle state ---
     enum class DragTarget { None, DownThresh, DownRatio, UpThresh, UpRatio };

@@ -59,15 +59,11 @@ CompressorDisplay::CompressorDisplay(juce::AudioProcessorValueTreeState& apvtsRe
         timeButtons[static_cast<size_t>(i)].setToggleState(
             i == selectedTimeIndex, juce::dontSendNotification);
         timeButtons[static_cast<size_t>(i)].onClick = [this, i]() {
-            if (beatSyncMode) {
-                if (i < kNumBarOptions) {
-                    selectedBarIndex = i;
-                    displayRangeBeats = static_cast<double>(kBarBeats[i]);
-                }
-            } else {
-                selectedTimeIndex = i;
+            selectedTimeIndex = i;
+            if (beatSyncMode)
+                displayRangeBeats = static_cast<double>(kBeatFractions[i]);
+            else
                 updateDisplayDurationFromBPM();
-            }
         };
         addAndMakeVisible(timeButtons[static_cast<size_t>(i)]);
     }
@@ -115,24 +111,10 @@ void CompressorDisplay::setBeatSyncMode(bool enabled) {
     if (beatSyncMode == enabled) return;
     beatSyncMode = enabled;
 
-    // Swap time button labels
+    // Both modes use the same time buttons/labels — just update displayRangeBeats
     if (beatSyncMode) {
-        for (int i = 0; i < kNumTimeOptions; ++i) {
-            if (i < kNumBarOptions)
-                timeButtons[static_cast<size_t>(i)].setButtonText(kBarLabels[i]);
-            timeButtons[static_cast<size_t>(i)].setVisible(i < kNumBarOptions);
-        }
-        // Select first bar option
-        selectedBarIndex = 0;
-        displayRangeBeats = static_cast<double>(kBarBeats[0]);
-        timeButtons[0].setToggleState(true, juce::dontSendNotification);
+        displayRangeBeats = static_cast<double>(kBeatFractions[selectedTimeIndex]);
     } else {
-        for (int i = 0; i < kNumTimeOptions; ++i) {
-            timeButtons[static_cast<size_t>(i)].setButtonText(kBeatLabels[i]);
-            timeButtons[static_cast<size_t>(i)].setVisible(true);
-        }
-        timeButtons[static_cast<size_t>(selectedTimeIndex)].setToggleState(
-            true, juce::dontSendNotification);
         updateDisplayDurationFromBPM();
     }
     repaint();
@@ -577,11 +559,14 @@ void CompressorDisplay::paintDetectorCurve(juce::Graphics& g,
         int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
         endSamp = juce::jmin(endSamp, displaySamples);
 
-        // Use last sample in bin — detector data is already RMS-smoothed,
-        // so max-per-bin would add artificial spikiness
-        float db = (endSamp > startSamp)
-                       ? paintBufDetector[static_cast<size_t>(endSamp - 1)]
-                       : kMinDb;
+        // Average samples in bin for a smooth line regardless of detector mode
+        float sum = 0.0f;
+        int count = 0;
+        for (int s = startSamp; s < endSamp; ++s) {
+            sum += paintBufDetector[static_cast<size_t>(s)];
+            ++count;
+        }
+        float db = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
 
         float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
         float y = area.getBottom() - norm * area.getHeight();
@@ -871,9 +856,17 @@ void CompressorDisplay::paintBeatSyncDetector(juce::Graphics& g,
 
     juce::Path detPath;
     for (int px = 0; px < w; ++px) {
+        const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
         int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
         endBin = juce::jmin(endBin, numBins);
-        float db = (endBin > 0) ? bins[endBin - 1] : kMinDb;
+        // Average bins for smooth display
+        float sum = 0.0f;
+        int count = 0;
+        for (int b = startBin; b < endBin; ++b) {
+            sum += bins[b];
+            ++count;
+        }
+        float db = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
         float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
         float y = area.getBottom() - norm * area.getHeight();
 
