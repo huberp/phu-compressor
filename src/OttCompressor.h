@@ -83,8 +83,13 @@ class OttCompressor {
         const SampleType downGain  = dbToLinear(downResult.gainDb);
         const SampleType intermediate = input * downGain;
 
-        // Stage 2: upward compression on post-downward signal
-        const SampleType envDbUp  = detectorUp.processSample(channel, intermediate);
+        // Stage 2: upward compression.
+        // Detection is against the ORIGINAL input level, not intermediate.
+        // This ensures the upward stage never boosts a signal that was originally
+        // above the upward threshold — even if downward compression brought it
+        // below that threshold in intermediate.
+        // The boost is applied to intermediate (post-downward signal).
+        const SampleType envDbUp  = detectorUp.processSample(channel, input);
         const auto upResult       = upStage.processSample(channel, envDbUp);
         const SampleType upGain   = dbToLinear(upResult.gainDb);
 

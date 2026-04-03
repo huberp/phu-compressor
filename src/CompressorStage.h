@@ -10,8 +10,12 @@ enum class StageDirection { Downward, Upward };
  * CompressorStage — one independent compressor stage (downward or upward).
  *
  * Per-sample pipeline:
- *   1. Level ballistics: one-pole smoother applied to the incoming detector level
- *                        (attack when level is rising, release when falling)
+ *   1. Level ballistics: one-pole smoother applied to the incoming detector level.
+ *                        For Downward: attack when level is rising, release when falling.
+ *                        For Upward:   attack when level is falling (boost engaging),
+ *                                      release when level is rising (boost disengaging).
+ *                        This ensures Attack/Release always describe how fast the effect
+ *                        turns on/off from the user's perspective regardless of direction.
  *   2. Gain computation: instantaneous gain derived from the smoothed level,
  *                        threshold, and ratio
  *
@@ -37,13 +41,21 @@ class CompressorStage {
     }
 
     void reset() {
+        // Downward: init low so the first real signal uses attack (rises correctly).
+        // Upward:   init high (0 dB is above any realistic threshold) so the first
+        //           real signal does NOT trigger an erroneous burst of gain boost.
+        //           If gainEnv started at -200 for an upward stage, smoothed would
+        //           take seconds to rise above threshold while applying massive gain.
+        const SampleType initLevel = (direction == StageDirection::Downward)
+                                         ? SampleType(-200)
+                                         : SampleType(0);
         for (int ch = 0; ch < kMaxChannels; ++ch)
-            gainEnv[ch] = SampleType(-200); // start very low so first signal uses attack coeff
+            gainEnv[ch] = initLevel;
     }
 
     // ── Configuration ────────────────────────────────────────────────────
 
-    void setDirection(StageDirection d) { direction = d; }
+    void setDirection(StageDirection d) { direction = d; reset(); }
 
     void setThresholdDb(SampleType dB) { threshDb = dB; }
 
@@ -67,11 +79,19 @@ class CompressorStage {
     };
 
     Result processSample(int channel, SampleType envDb) {
-        // Stage 1: one-pole ballistics on the detector level
-        //   Attack  = level rising  (signal getting louder)
-        //   Release = level falling (signal getting quieter)
+        // Stage 1: one-pole ballistics on the detector level.
+        //
+        // For Downward compression the compressor ENGAGES when the level rises
+        // above threshold, so attack tracks a rising level and release a falling one.
+        //
+        // For Upward compression the semantics are inverted: the boost ENGAGES
+        // when the level FALLS below threshold, so attack must track a falling level
+        // and release a rising one — otherwise "Attack" visually controls the wrong
+        // side of the boost envelope.
         SampleType& smoothed = gainEnv[channel];
-        const SampleType coeff = (envDb > smoothed) ? attackCoeff : releaseCoeff;
+        const bool levelRising = (envDb > smoothed);
+        const bool engaging    = (direction == StageDirection::Downward) ? levelRising : !levelRising;
+        const SampleType coeff = engaging ? attackCoeff : releaseCoeff;
         smoothed = envDb + coeff * (smoothed - envDb);
 
         // Stage 2: instantaneous gain from smoothed level
