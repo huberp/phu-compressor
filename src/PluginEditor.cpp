@@ -72,12 +72,14 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     rmsBeatDivLabel.setJustificationType(juce::Justification::centredLeft);
     rmsBeatDivLabel.setFont(juce::FontOptions(11.0f));
     addAndMakeVisible(rmsBeatDivLabel);
-    rmsBeatDivCombo.addItem("1/8", 1);
-    rmsBeatDivCombo.addItem("1/4", 2);
-    rmsBeatDivCombo.addItem("1/2", 3);
-    rmsBeatDivCombo.addItem("1", 4);
-    rmsBeatDivCombo.addItem("2", 5);
-    rmsBeatDivCombo.addItem("4", 6);
+    rmsBeatDivCombo.addItem("1/32", 1);
+    rmsBeatDivCombo.addItem("1/16", 2);
+    rmsBeatDivCombo.addItem("1/8", 3);
+    rmsBeatDivCombo.addItem("1/4", 4);
+    rmsBeatDivCombo.addItem("1/2", 5);
+    rmsBeatDivCombo.addItem("1", 6);
+    rmsBeatDivCombo.addItem("2", 7);
+    rmsBeatDivCombo.addItem("4", 8);
     addAndMakeVisible(rmsBeatDivCombo);
 
     // Peak window slider
@@ -147,6 +149,12 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
     const bool isRms = (detType == 0);
     const bool isSynced = rmsSyncToggle.getToggleState();
 
+    const bool visChanged =
+        rmsWindowSlider.isVisible() != (isRms && !isSynced) ||
+        rmsSyncToggle.isVisible()   != isRms                ||
+        rmsBeatDivCombo.isVisible() != (isRms && isSynced)  ||
+        peakWindowSlider.isVisible()!= (!isRms);
+
     rmsWindowSlider.setVisible(isRms && !isSynced);
     rmsWindowLabel.setVisible(isRms && !isSynced);
     rmsSyncToggle.setVisible(isRms);
@@ -154,6 +162,9 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
     rmsBeatDivLabel.setVisible(isRms && isSynced);
     peakWindowSlider.setVisible(!isRms);
     peakWindowLabel.setVisible(!isRms);
+
+    if (visChanged)
+        resized();
 }
 
 void PhuCompressorAudioProcessorEditor::timerCallback() {
@@ -246,8 +257,16 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Detector group (5 rows: type, rmsWindow, sync, beatDiv, peakWindow) ──
-    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
+    // ── Detector group (dynamic rows based on selected type) ────────────
+    const int detType  = detectorTypeCombo.getSelectedItemIndex(); // 0=RMS, 1=Peak
+    const bool isRms   = (detType == 0);
+    const bool isSynced = rmsSyncToggle.getToggleState();
+    // Peak: Type + Window = 2 rows
+    // RMS unsynced: Type + Window + Sync = 3 rows
+    // RMS synced:   Type + Sync + Beat Div = 3 rows
+    const int detRows  = isRms ? 3 : 2;
+
+    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(detRows));
     detectorGroup.setBounds(detGroupArea);
     {
         auto content = detGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -264,14 +283,17 @@ void PhuCompressorAudioProcessorEditor::resized() {
             content.removeFromTop(kRowGap);
         };
         layoutComboRow(detectorTypeLabel, detectorTypeCombo);
-        layoutSliderRow(rmsWindowLabel, rmsWindowSlider);
-        {
+        if (isRms && !isSynced)
+            layoutSliderRow(rmsWindowLabel, rmsWindowSlider);
+        if (isRms) {
             auto row = content.removeFromTop(kRowHeight);
             rmsSyncToggle.setBounds(row.removeFromLeft(kLabelWidth));
             content.removeFromTop(kRowGap);
         }
-        layoutComboRow(rmsBeatDivLabel, rmsBeatDivCombo);
-        layoutSliderRow(peakWindowLabel, peakWindowSlider);
+        if (isRms && isSynced)
+            layoutComboRow(rmsBeatDivLabel, rmsBeatDivCombo);
+        if (!isRms)
+            layoutSliderRow(peakWindowLabel, peakWindowSlider);
     }
     sliderArea.removeFromTop(kGroupSpacing);
 

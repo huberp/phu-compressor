@@ -32,11 +32,11 @@ class CompressorDisplay : public juce::Component,
     static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
 
     // Musical time options (in beats) — used for both scrolling and beat-sync display
-    static constexpr int kNumTimeOptions = 5;
+    static constexpr int kNumTimeOptions = 4;
     static constexpr float kBeatFractions[kNumTimeOptions] = {
-        0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
+        1.0f, 2.0f, 4.0f, 8.0f};
     static constexpr const char* kBeatLabels[kNumTimeOptions] = {
-        "1/2", "1", "2", "4", "8"};
+        "1", "2", "4", "8"};
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
