@@ -10,9 +10,14 @@ enum class StageDirection { Downward, Upward };
  * CompressorStage — one independent compressor stage (downward or upward).
  *
  * Per-sample pipeline:
- *   1. Trigger:   binary 0/1 based on whether envDb crosses the threshold
- *   2. Gate:      one-pole ballistics smoother on the trigger (attack/release)
- *   3. Gain:      smoothedGate * level-proportional dB value
+ *   1. Level ballistics: one-pole smoother applied to the incoming detector level
+ *                        (attack when level is rising, release when falling)
+ *   2. Gain computation: instantaneous gain derived from the smoothed level,
+ *                        threshold, and ratio
+ *
+ * Smoothing the level (not the gain) is the standard compressor design:
+ * gain is simply the static characteristic evaluated at the smoothed level,
+ * so it tracks the envelope naturally without needing special-case logic.
  *
  * Two instances (one Downward, one Upward) are composed inside OttCompressor.
  */
@@ -33,7 +38,7 @@ class CompressorStage {
 
     void reset() {
         for (int ch = 0; ch < kMaxChannels; ++ch)
-            smoothedGate[ch] = SampleType(0);
+            gainEnv[ch] = SampleType(-200); // start very low so first signal uses attack coeff
     }
 
     // ── Configuration ────────────────────────────────────────────────────
@@ -58,43 +63,31 @@ class CompressorStage {
 
     struct Result {
         SampleType gainDb;
-        SampleType gate;  // smoothed gate value [0..1] for UI/metrics
+        SampleType gate;  // abs(gainDb) for UI/metrics
     };
 
     Result processSample(int channel, SampleType envDb) {
-        // Stage 1: binary trigger
-        const SampleType trigger = computeTrigger(envDb);
+        // Stage 1: one-pole ballistics on the detector level
+        //   Attack  = level rising  (signal getting louder)
+        //   Release = level falling (signal getting quieter)
+        SampleType& smoothed = gainEnv[channel];
+        const SampleType coeff = (envDb > smoothed) ? attackCoeff : releaseCoeff;
+        smoothed = envDb + coeff * (smoothed - envDb);
 
-        // Stage 2: gate ballistics (one-pole smoother)
-        SampleType& gate = smoothedGate[channel];
-        const SampleType coeff = (trigger > gate) ? attackCoeff : releaseCoeff;
-        gate = trigger + coeff * (gate - trigger);
-
-        // Stage 3: gain computation (gate modulates level-proportional dB)
+        // Stage 2: instantaneous gain from smoothed level
         SampleType gainDb;
         if (direction == StageDirection::Downward) {
-            // Reduce gain when above threshold
-            const SampleType excess = envDb - threshDb;
-            gainDb = -gate * std::max(excess, SampleType(0))
-                     * (SampleType(1) - SampleType(1) / ratio);
+            const SampleType excess = std::max(smoothed - threshDb, SampleType(0));
+            gainDb = -excess * (SampleType(1) - SampleType(1) / ratio);
         } else {
-            // Boost gain when below threshold
-            const SampleType deficit = threshDb - envDb;
-            gainDb = gate * std::max(deficit, SampleType(0))
-                     * (SampleType(1) - SampleType(1) / ratio);
+            const SampleType deficit = std::max(threshDb - smoothed, SampleType(0));
+            gainDb = deficit * (SampleType(1) - SampleType(1) / ratio);
         }
 
-        return { gainDb, gate };
+        return { gainDb, std::abs(gainDb) };
     }
 
   private:
-    SampleType computeTrigger(SampleType envDb) const {
-        if (direction == StageDirection::Downward)
-            return (envDb > threshDb) ? SampleType(1) : SampleType(0);
-        else
-            return (envDb < threshDb) ? SampleType(1) : SampleType(0);
-    }
-
     SampleType msToCoeff(SampleType timeMs) const {
         return (timeMs < SampleType(0.001))
                    ? SampleType(0)
@@ -120,5 +113,5 @@ class CompressorStage {
     SampleType attackCoeff   { SampleType(0) };
     SampleType releaseCoeff  { SampleType(0) };
 
-    SampleType smoothedGate[kMaxChannels] = {};
+    SampleType gainEnv[kMaxChannels] = {};
 };

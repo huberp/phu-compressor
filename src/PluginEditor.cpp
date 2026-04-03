@@ -132,6 +132,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     // Wire beat-sync buffer pointers
     compressorDisplay.setBeatSyncBuffers(p.getInputSyncBuffer(),
                                           p.getGRSyncBuffer(),
+                                          p.getUpGRSyncBuffer(),
                                           p.getDetectorSyncBuffer());
 
     updateDetectorControlVisibility();
@@ -184,6 +185,7 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
     // Pull data from FIFOs and repaint
     compressorDisplay.updateFromFifos(audioProcessor.getInputFifo(),
                                        audioProcessor.getGainReductionFifo(),
+                                       audioProcessor.getUpGainReductionFifo(),
                                        audioProcessor.getDetectorFifo());
     compressorDisplay.repaint();
 

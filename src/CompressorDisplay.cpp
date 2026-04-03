@@ -121,10 +121,12 @@ void CompressorDisplay::setBeatSyncMode(bool enabled) {
 }
 
 void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBuffer& input,
-                                            const BeatSyncBuffer& gr,
+                                            const BeatSyncBuffer& downGr,
+                                            const BeatSyncBuffer& upGr,
                                             const BeatSyncBuffer& detector) {
-    inputSyncBuf = &input;
-    grSyncBuf = &gr;
+    inputSyncBuf    = &input;
+    downGrSyncBuf   = &downGr;
+    upGrSyncBuf     = &upGr;
     detectorSyncBuf = &detector;
 }
 
@@ -177,7 +179,8 @@ void CompressorDisplay::readFromRing(const RingBuffer& ring, float* dest, int co
 // ─────────────────────────────────────────────────────────────────────────
 
 void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
-                                         AudioSampleFifo<2>& grFifo,
+                                         AudioSampleFifo<2>& downGrFifo,
+                                         AudioSampleFifo<2>& upGrFifo,
                                          AudioSampleFifo<2>& detectorFifo) {
     // Pull input samples (stereo → mono → dB → ring)
     {
@@ -186,7 +189,6 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
         if (toPull > 0) {
             float* ch[2] = {tempL.data(), tempR.data()};
             int got = inputFifo.pull(ch, toPull);
-            // Stereo → mono, then convert to dB
             for (int i = 0; i < got; ++i) {
                 float mono = (tempL[static_cast<size_t>(i)] + tempR[static_cast<size_t>(i)]) * 0.5f;
                 float absMono = std::abs(mono);
@@ -199,22 +201,37 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
         }
     }
 
-    // Pull gain reduction (stereo → min(L,R) → dB → ring)
+    // Pull downward GR (stereo → min(L,R) linear → dB, always ≤ 0)
     {
-        const int avail = grFifo.getNumAvailable();
+        const int avail = downGrFifo.getNumAvailable();
         const int toPull = juce::jmin(avail, kMaxPullSamples);
         if (toPull > 0) {
             float* ch[2] = {tempL.data(), tempR.data()};
-            int got = grFifo.pull(ch, toPull);
+            int got = downGrFifo.pull(ch, toPull);
             for (int i = 0; i < got; ++i) {
                 float gain = juce::jmin(tempL[static_cast<size_t>(i)],
                                         tempR[static_cast<size_t>(i)]);
-                float db = (gain > 1e-10f)
-                               ? 20.0f * std::log10(gain)
-                               : -kGrMaxDb;
-                tempL[static_cast<size_t>(i)] = juce::jlimit(-kGrMaxDb, 20.0f, db);
+                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : -kGrMaxDb;
+                tempL[static_cast<size_t>(i)] = juce::jlimit(-kGrMaxDb, 0.0f, db);
             }
-            appendToRing(grRing, tempL.data(), got);
+            appendToRing(downGrRing, tempL.data(), got);
+        }
+    }
+
+    // Pull upward boost (stereo → max(L,R) linear → dB, always ≥ 0)
+    {
+        const int avail = upGrFifo.getNumAvailable();
+        const int toPull = juce::jmin(avail, kMaxPullSamples);
+        if (toPull > 0) {
+            float* ch[2] = {tempL.data(), tempR.data()};
+            int got = upGrFifo.pull(ch, toPull);
+            for (int i = 0; i < got; ++i) {
+                float gain = juce::jmax(tempL[static_cast<size_t>(i)],
+                                        tempR[static_cast<size_t>(i)]);
+                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : 0.0f;
+                tempL[static_cast<size_t>(i)] = juce::jlimit(0.0f, kGrMaxDb, db);
+            }
+            appendToRing(upGrRing, tempL.data(), got);
         }
     }
 
@@ -591,104 +608,80 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
         static_cast<int>(sampleRate * static_cast<double>(displayDurationMs) / 1000.0),
         kRingSize);
 
-    readFromRing(grRing, paintBufGR.data(), displaySamples);
-
     const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
     if (w <= 0 || displaySamples <= 0)
         return;
 
-    const float samplesPerPixel = static_cast<float>(displaySamples) / static_cast<float>(w);
+    const float samplesPerPixel    = static_cast<float>(displaySamples) / static_cast<float>(w);
+    const float attenAreaHeight    = area.getHeight() * 0.3f;
+    const float boostAreaHeight    = area.getHeight() * 0.3f;
 
-    // Attenuation region: top 30% of graph (0 dB at top edge, -kGrMaxDb going down)
-    const float attenAreaHeight = area.getHeight() * 0.3f;
-    // Boost region: bottom 30% of graph (0 dB at bottom edge, +kGrMaxDb going up)
-    const float boostAreaHeight = area.getHeight() * 0.3f;
-
-    // Pre-compute average dB per pixel column (using pre-allocated member buffer)
-    std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
-    for (int px = 0; px < w; ++px) {
-        const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
-        int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
-        endSamp = juce::jmin(endSamp, displaySamples);
-        float sum = 0.0f;
-        int count = 0;
-        for (int s = startSamp; s < endSamp; ++s) {
-            sum += paintBufGR[static_cast<size_t>(s)];
-            ++count;
+    // Helper: average a ring into paintBufAvgDb
+    auto avgRing = [&](RingBuffer& ring) {
+        readFromRing(ring, paintBufGR.data(), displaySamples);
+        std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
+        for (int px = 0; px < w; ++px) {
+            const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
+            int endSamp = juce::jmin(static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel),
+                                     displaySamples);
+            float sum = 0.0f; int count = 0;
+            for (int s = startSamp; s < endSamp; ++s) { sum += paintBufGR[static_cast<size_t>(s)]; ++count; }
+            paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
         }
-        paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
-    }
+    };
 
-    // --- Attenuation (orange, from top) — negative dB values ---
-    if (showDownGr)
-    {
+    // --- Attenuation (orange, from top) — downGrRing values are always ≤ 0 ---
+    if (showDownGr) {
+        avgRing(downGrRing);
         juce::Path attenPath;
         attenPath.startNewSubPath(static_cast<float>(area.getX()), static_cast<float>(area.getY()));
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float attenDb = juce::jmin(db, 0.0f); // only negative part
-            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
-            float y = area.getY() + norm * attenAreaHeight;
-            attenPath.lineTo(static_cast<float>(area.getX() + px), y);
+            float norm = juce::jlimit(0.0f, 1.0f, -paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
+            attenPath.lineTo(static_cast<float>(area.getX() + px),
+                             area.getY() + norm * attenAreaHeight);
         }
         attenPath.lineTo(static_cast<float>(area.getRight()), static_cast<float>(area.getY()));
         attenPath.closeSubPath();
-
         g.setColour(kGrFillColour.withAlpha(0.4f));
         g.fillPath(attenPath);
 
-        // Stroke the bottom edge
         juce::Path attenLine;
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float attenDb = juce::jmin(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
+            float norm = juce::jlimit(0.0f, 1.0f, -paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
             float y = area.getY() + norm * attenAreaHeight;
-            if (px == 0)
-                attenLine.startNewSubPath(static_cast<float>(area.getX()), y);
-            else
-                attenLine.lineTo(static_cast<float>(area.getX() + px), y);
+            if (px == 0) attenLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else         attenLine.lineTo(static_cast<float>(area.getX() + px), y);
         }
         g.setColour(kGrLineColour);
         g.strokePath(attenLine, juce::PathStrokeType(1.5f));
     }
 
-    // --- Boost (green, from bottom) — positive dB values ---
-    if (showUpGr)
-    {
+    // --- Boost (green, from bottom) — upGrRing values are always ≥ 0 ---
+    if (showUpGr) {
+        avgRing(upGrRing);
         const float bottom = static_cast<float>(area.getBottom());
         juce::Path boostPath;
         boostPath.startNewSubPath(static_cast<float>(area.getX()), bottom);
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float boostDb = juce::jmax(db, 0.0f); // only positive part
-            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
-            float y = bottom - norm * boostAreaHeight;
-            boostPath.lineTo(static_cast<float>(area.getX() + px), y);
+            float norm = juce::jlimit(0.0f, 1.0f, paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
+            boostPath.lineTo(static_cast<float>(area.getX() + px), bottom - norm * boostAreaHeight);
         }
         boostPath.lineTo(static_cast<float>(area.getRight()), bottom);
         boostPath.closeSubPath();
-
         g.setColour(kBoostFillColour.withAlpha(0.35f));
         g.fillPath(boostPath);
 
-        // Stroke the top edge
         juce::Path boostLine;
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float boostDb = juce::jmax(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
+            float norm = juce::jlimit(0.0f, 1.0f, paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
             float y = bottom - norm * boostAreaHeight;
-            if (px == 0)
-                boostLine.startNewSubPath(static_cast<float>(area.getX()), y);
-            else
-                boostLine.lineTo(static_cast<float>(area.getX() + px), y);
+            if (px == 0) boostLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else         boostLine.lineTo(static_cast<float>(area.getX() + px), y);
         }
         g.setColour(kBoostLineColour);
         g.strokePath(boostLine, juce::PathStrokeType(1.5f));
     }
 
-    // Labels
     g.setFont(juce::FontOptions(8.0f));
     if (showDownGr) {
         g.setColour(kGrLineColour.withAlpha(0.6f));
@@ -886,44 +879,35 @@ void CompressorDisplay::paintBeatSyncDetector(juce::Graphics& g,
 
 void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
                                                     const juce::Rectangle<int>& area) {
-    if (grSyncBuf == nullptr || grSyncBuf->size() <= 0)
-        return;
-
-    const int numBins = grSyncBuf->size();
-    const float* bins = grSyncBuf->data();
     const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
-    if (w <= 0)
-        return;
+    if (w <= 0) return;
 
-    const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
     const float attenAreaHeight = area.getHeight() * 0.3f;
     const float boostAreaHeight = area.getHeight() * 0.3f;
 
-    // Pre-compute average dB per pixel column
-    std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
-    for (int px = 0; px < w; ++px) {
-        const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
-        int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
-        endBin = juce::jmin(endBin, numBins);
-        float sum = 0.0f;
-        int count = 0;
-        for (int b = startBin; b < endBin; ++b) {
-            sum += bins[b];
-            ++count;
+    auto avgSyncBuf = [&](const BeatSyncBuffer* buf) {
+        if (buf == nullptr || buf->size() <= 0) return false;
+        const int numBins = buf->size();
+        const float* bins = buf->data();
+        const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
+        std::fill(paintBufAvgDb.begin(), paintBufAvgDb.begin() + w, 0.0f);
+        for (int px = 0; px < w; ++px) {
+            const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
+            int endBin = juce::jmin(static_cast<int>(static_cast<float>(px + 1) * binsPerPixel), numBins);
+            float sum = 0.0f; int count = 0;
+            for (int b = startBin; b < endBin; ++b) { sum += bins[b]; ++count; }
+            paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
         }
-        paintBufAvgDb[static_cast<size_t>(px)] = (count > 0) ? sum / static_cast<float>(count) : 0.0f;
-    }
+        return true;
+    };
 
-    // Attenuation (orange, from top)
-    if (showDownGr) {
+    // Attenuation (orange, from top) — downGrSyncBuf values are ≤ 0
+    if (showDownGr && avgSyncBuf(downGrSyncBuf)) {
         juce::Path attenPath;
         attenPath.startNewSubPath(static_cast<float>(area.getX()), static_cast<float>(area.getY()));
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float attenDb = juce::jmin(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
-            float y = area.getY() + norm * attenAreaHeight;
-            attenPath.lineTo(static_cast<float>(area.getX() + px), y);
+            float norm = juce::jlimit(0.0f, 1.0f, -paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
+            attenPath.lineTo(static_cast<float>(area.getX() + px), area.getY() + norm * attenAreaHeight);
         }
         attenPath.lineTo(static_cast<float>(area.getRight()), static_cast<float>(area.getY()));
         attenPath.closeSubPath();
@@ -932,30 +916,23 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
 
         juce::Path attenLine;
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float attenDb = juce::jmin(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, -attenDb / kGrMaxDb);
+            float norm = juce::jlimit(0.0f, 1.0f, -paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
             float y = area.getY() + norm * attenAreaHeight;
-            if (px == 0)
-                attenLine.startNewSubPath(static_cast<float>(area.getX()), y);
-            else
-                attenLine.lineTo(static_cast<float>(area.getX() + px), y);
+            if (px == 0) attenLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else         attenLine.lineTo(static_cast<float>(area.getX() + px), y);
         }
         g.setColour(kGrLineColour);
         g.strokePath(attenLine, juce::PathStrokeType(1.5f));
     }
 
-    // Boost (magenta, from bottom)
-    if (showUpGr) {
+    // Boost (green, from bottom) — upGrSyncBuf values are ≥ 0
+    if (showUpGr && avgSyncBuf(upGrSyncBuf)) {
         const float bottom = static_cast<float>(area.getBottom());
         juce::Path boostPath;
         boostPath.startNewSubPath(static_cast<float>(area.getX()), bottom);
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float boostDb = juce::jmax(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
-            float y = bottom - norm * boostAreaHeight;
-            boostPath.lineTo(static_cast<float>(area.getX() + px), y);
+            float norm = juce::jlimit(0.0f, 1.0f, paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
+            boostPath.lineTo(static_cast<float>(area.getX() + px), bottom - norm * boostAreaHeight);
         }
         boostPath.lineTo(static_cast<float>(area.getRight()), bottom);
         boostPath.closeSubPath();
@@ -964,20 +941,15 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
 
         juce::Path boostLine;
         for (int px = 0; px < w; ++px) {
-            float db = paintBufAvgDb[static_cast<size_t>(px)];
-            float boostDb = juce::jmax(db, 0.0f);
-            float norm = juce::jlimit(0.0f, 1.0f, boostDb / kGrMaxDb);
+            float norm = juce::jlimit(0.0f, 1.0f, paintBufAvgDb[static_cast<size_t>(px)] / kGrMaxDb);
             float y = bottom - norm * boostAreaHeight;
-            if (px == 0)
-                boostLine.startNewSubPath(static_cast<float>(area.getX()), y);
-            else
-                boostLine.lineTo(static_cast<float>(area.getX() + px), y);
+            if (px == 0) boostLine.startNewSubPath(static_cast<float>(area.getX()), y);
+            else         boostLine.lineTo(static_cast<float>(area.getX() + px), y);
         }
         g.setColour(kBoostLineColour);
         g.strokePath(boostLine, juce::PathStrokeType(1.5f));
     }
 
-    // Labels
     g.setFont(juce::FontOptions(8.0f));
     if (showDownGr) {
         g.setColour(kGrLineColour.withAlpha(0.6f));

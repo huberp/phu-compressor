@@ -42,13 +42,15 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
     AudioSampleFifo<2>& getInputFifo() { return m_inputFifo; }
-    AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }
+    AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }  // downward GR
+    AudioSampleFifo<2>& getUpGainReductionFifo() { return m_upGrFifo; }         // upward boost
     AudioSampleFifo<2>& getDetectorFifo() { return m_detectorFifo; }
     SyncGlobals& getSyncGlobals() { return m_syncGlobals; }
 
     // Beat-sync buffer access (read-only pointers for UI)
     const BeatSyncBuffer& getInputSyncBuffer() const { return m_inputSyncBuf; }
-    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }
+    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
+    const BeatSyncBuffer& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
     const BeatSyncBuffer& getDetectorSyncBuffer() const { return m_detectorSyncBuf; }
 
     /** Set the display range in beats (called from UI thread). */
@@ -106,11 +108,13 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
 
     // Lock-free FIFOs for audio→UI data transfer
     AudioSampleFifo<2> m_inputFifo;
-    AudioSampleFifo<2> m_gainReductionFifo;
+    AudioSampleFifo<2> m_gainReductionFifo; // downward GR (linear, ≤ 1.0)
+    AudioSampleFifo<2> m_upGrFifo;          // upward boost (linear, ≥ 1.0)
     AudioSampleFifo<2> m_detectorFifo;
 
     // Temp buffers (reused each processBlock)
-    juce::AudioBuffer<float> m_grBuffer;
+    juce::AudioBuffer<float> m_grBuffer;    // downward GR per-sample
+    juce::AudioBuffer<float> m_upGrBuffer;  // upward boost per-sample
     juce::AudioBuffer<float> m_detectorBuffer;
 
     // DAW state tracking (BPM, sample rate, transport)
@@ -118,7 +122,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
 
     // Beat-sync position-indexed buffers (written per-sample in processBlock)
     BeatSyncBuffer m_inputSyncBuf;
-    BeatSyncBuffer m_grSyncBuf;
+    BeatSyncBuffer m_grSyncBuf;     // downward GR
+    BeatSyncBuffer m_upGrSyncBuf;   // upward boost
     BeatSyncBuffer m_detectorSyncBuf;
     std::atomic<double> m_displayRangeBeats{4.0};
 

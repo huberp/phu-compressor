@@ -56,7 +56,8 @@ class CompressorDisplay : public juce::Component,
 
     /** Point to the processor's beat-sync buffers (call once from editor constructor). */
     void setBeatSyncBuffers(const BeatSyncBuffer& input,
-                            const BeatSyncBuffer& gr,
+                            const BeatSyncBuffer& downGr,
+                            const BeatSyncBuffer& upGr,
                             const BeatSyncBuffer& detector);
 
     /** Set current playhead PPQ for cursor position (call from timerCallback). */
@@ -68,7 +69,8 @@ class CompressorDisplay : public juce::Component,
 
     /** Pull latest samples from FIFOs (call from editor timerCallback). */
     void updateFromFifos(AudioSampleFifo<2>& inputFifo,
-                         AudioSampleFifo<2>& grFifo,
+                         AudioSampleFifo<2>& downGrFifo,
+                         AudioSampleFifo<2>& upGrFifo,
                          AudioSampleFifo<2>& detectorFifo);
 
     void paint(juce::Graphics& g) override;
@@ -96,7 +98,8 @@ class CompressorDisplay : public juce::Component,
         int samplesWritten = 0;
     };
     RingBuffer inputRing;    // input level in dB (mono)
-    RingBuffer grRing;       // gain reduction in dB (mono, negative values = compression)
+    RingBuffer downGrRing;   // downward GR in dB (mono, always ≤ 0)
+    RingBuffer upGrRing;     // upward boost in dB (mono, always ≥ 0)
     RingBuffer detectorRing; // detector level in dB (mono)
 
     // Temp pull buffers
@@ -106,6 +109,7 @@ class CompressorDisplay : public juce::Component,
     // Paint read-out buffers
     std::array<float, kRingSize> paintBufInput{};
     std::array<float, kRingSize> paintBufGR{};
+    std::array<float, kRingSize> paintBufUpGR{};
     std::array<float, kRingSize> paintBufDetector{};
     std::array<float, kMaxDisplayWidth> paintBufAvgDb{};
 
@@ -127,7 +131,8 @@ class CompressorDisplay : public juce::Component,
     // --- Beat-sync state ---
     bool beatSyncMode = false;
     const BeatSyncBuffer* inputSyncBuf = nullptr;
-    const BeatSyncBuffer* grSyncBuf = nullptr;
+    const BeatSyncBuffer* downGrSyncBuf = nullptr;
+    const BeatSyncBuffer* upGrSyncBuf = nullptr;
     const BeatSyncBuffer* detectorSyncBuf = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
