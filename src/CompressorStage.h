@@ -10,18 +10,23 @@ enum class StageDirection { Downward, Upward };
  * CompressorStage — one independent compressor stage (downward or upward).
  *
  * Per-sample pipeline:
- *   1. Level ballistics: one-pole smoother applied to the incoming detector level.
- *                        For Downward: attack when level is rising, release when falling.
- *                        For Upward:   attack when level is falling (boost engaging),
- *                                      release when level is rising (boost disengaging).
- *                        This ensures Attack/Release always describe how fast the effect
- *                        turns on/off from the user's perspective regardless of direction.
- *   2. Gain computation: instantaneous gain derived from the smoothed level,
- *                        threshold, and ratio
+ *   1. Compute targetGainDb from the RAW (unsmoothed) detector level:
+ *        Downward: targetGainDb = -max(envDb - thresh, 0) * (1 - 1/ratio)   ≤ 0
+ *        Upward:   targetGainDb = +max(thresh - envDb, 0) * (1 - 1/ratio)   ≥ 0
  *
- * Smoothing the level (not the gain) is the standard compressor design:
- * gain is simply the static characteristic evaluated at the smoothed level,
- * so it tracks the envelope naturally without needing special-case logic.
+ *   2. Smooth gainEnv toward targetGainDb with one-pole ballistics:
+ *        Attack  = gain magnitude INCREASING (compressor/boost engaging)
+ *        Release = gain magnitude DECREASING (compressor/boost releasing toward 0)
+ *
+ * Why this is correct:
+ *   Target for the upward stage is INSTANTANEOUSLY 0 whenever the raw level is
+ *   above threshold. The one-pole smoother can only move toward its target —
+ *   it never overshoots. Therefore upward boost is IMPOSSIBLE on above-threshold
+ *   content in steady state, regardless of release time.
+ *
+ *   Contrast with level-smoothing: smoothing the level first means the smoothed
+ *   level stays below threshold for [release-time] after a transient arrives,
+ *   producing a boost tail on the transient — a fundamental design flaw.
  *
  * Two instances (one Downward, one Upward) are composed inside OttCompressor.
  */
@@ -41,16 +46,11 @@ class CompressorStage {
     }
 
     void reset() {
-        // Downward: init low so the first real signal uses attack (rises correctly).
-        // Upward:   init high (0 dB is above any realistic threshold) so the first
-        //           real signal does NOT trigger an erroneous burst of gain boost.
-        //           If gainEnv started at -200 for an upward stage, smoothed would
-        //           take seconds to rise above threshold while applying massive gain.
-        const SampleType initLevel = (direction == StageDirection::Downward)
-                                         ? SampleType(-200)
-                                         : SampleType(0);
+        // gainEnv starts at 0 (no compression, no boost) for both stages.
+        // This is correct: targetGainDb is also 0 when signal starts at 0,
+        // so there is no initial error to smooth away.
         for (int ch = 0; ch < kMaxChannels; ++ch)
-            gainEnv[ch] = initLevel;
+            gainEnv[ch] = SampleType(0);
     }
 
     // ── Configuration ────────────────────────────────────────────────────
@@ -79,32 +79,33 @@ class CompressorStage {
     };
 
     Result processSample(int channel, SampleType envDb) {
-        // Stage 1: one-pole ballistics on the detector level.
-        //
-        // For Downward compression the compressor ENGAGES when the level rises
-        // above threshold, so attack tracks a rising level and release a falling one.
-        //
-        // For Upward compression the semantics are inverted: the boost ENGAGES
-        // when the level FALLS below threshold, so attack must track a falling level
-        // and release a rising one — otherwise "Attack" visually controls the wrong
-        // side of the boost envelope.
-        SampleType& smoothed = gainEnv[channel];
-        const bool levelRising = (envDb > smoothed);
-        const bool engaging    = (direction == StageDirection::Downward) ? levelRising : !levelRising;
-        const SampleType coeff = engaging ? attackCoeff : releaseCoeff;
-        smoothed = envDb + coeff * (smoothed - envDb);
-
-        // Stage 2: instantaneous gain from smoothed level
-        SampleType gainDb;
+        // Step 1: instantaneous target gain from the raw detector level.
+        // Target is IMMEDIATELY 0 when the signal is in the "wrong" zone —
+        // above threshold for Downward, or below threshold for Upward.
+        // This is the key property that prevents above-threshold boosting.
+        SampleType targetGainDb;
         if (direction == StageDirection::Downward) {
-            const SampleType excess = std::max(smoothed - threshDb, SampleType(0));
-            gainDb = -excess * (SampleType(1) - SampleType(1) / ratio);
+            const SampleType excess = std::max(envDb - threshDb, SampleType(0));
+            targetGainDb = -excess * (SampleType(1) - SampleType(1) / ratio); // ≤ 0
         } else {
-            const SampleType deficit = std::max(threshDb - smoothed, SampleType(0));
-            gainDb = deficit * (SampleType(1) - SampleType(1) / ratio);
+            const SampleType deficit = std::max(threshDb - envDb, SampleType(0));
+            targetGainDb = deficit * (SampleType(1) - SampleType(1) / ratio); // ≥ 0
         }
 
-        return { gainDb, std::abs(gainDb) };
+        // Step 2: one-pole ballistics on gainEnv toward targetGainDb.
+        //   Attack  = gain magnitude increasing (effect engaging)
+        //   Release = gain magnitude decreasing (effect releasing toward 0)
+        //
+        // For Downward: magnitude grows when gain goes more negative → target < gainEnv
+        // For Upward:   magnitude grows when gain goes more positive → target > gainEnv
+        SampleType& genv = gainEnv[channel];
+        const bool attacking = (direction == StageDirection::Downward)
+                                   ? (targetGainDb < genv)
+                                   : (targetGainDb > genv);
+        const SampleType coeff = attacking ? attackCoeff : releaseCoeff;
+        genv = targetGainDb + coeff * (genv - targetGainDb);
+
+        return { genv, std::abs(genv) };
     }
 
   private:

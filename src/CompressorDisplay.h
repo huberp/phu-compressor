@@ -46,7 +46,8 @@ class CompressorDisplay : public juce::Component,
     void setDisplayDuration(float durationMs);
 
     /** Toggle visibility of individual overlay curves. */
-    void setShowDetectorCurve(bool show) { showDetectorCurve = show; }
+    void setShowUpDetectorCurve(bool show) { showUpDetectorCurve = show; }
+    void setShowDownDetectorCurve(bool show) { showDownDetectorCurve = show; }
     void setShowDownGr(bool show) { showDownGr = show; }
     void setShowUpGr(bool show) { showUpGr = show; }
 
@@ -58,7 +59,8 @@ class CompressorDisplay : public juce::Component,
     void setBeatSyncBuffers(const BeatSyncBuffer& input,
                             const BeatSyncBuffer& downGr,
                             const BeatSyncBuffer& upGr,
-                            const BeatSyncBuffer& detector);
+                            const BeatSyncBuffer& detector,
+                            const BeatSyncBuffer& downDetector);
 
     /** Set current playhead PPQ for cursor position (call from timerCallback). */
     void setCurrentPpq(double ppq) { currentPpq = ppq; }
@@ -71,7 +73,8 @@ class CompressorDisplay : public juce::Component,
     void updateFromFifos(AudioSampleFifo<2>& inputFifo,
                          AudioSampleFifo<2>& downGrFifo,
                          AudioSampleFifo<2>& upGrFifo,
-                         AudioSampleFifo<2>& detectorFifo);
+                         AudioSampleFifo<2>& detectorFifo,
+                         AudioSampleFifo<2>& downDetectorFifo);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -97,10 +100,11 @@ class CompressorDisplay : public juce::Component,
         int writePos = 0;
         int samplesWritten = 0;
     };
-    RingBuffer inputRing;    // input level in dB (mono)
-    RingBuffer downGrRing;   // downward GR in dB (mono, always ≤ 0)
-    RingBuffer upGrRing;     // upward boost in dB (mono, always ≥ 0)
-    RingBuffer detectorRing; // detector level in dB (mono)
+    RingBuffer inputRing;         // input level in dB (mono)
+    RingBuffer downGrRing;        // downward GR in dB (mono, always ≤ 0)
+    RingBuffer upGrRing;          // upward boost in dB (mono, always ≥ 0)
+    RingBuffer detectorRing;      // up-detector level in dB (mono, raw input)
+    RingBuffer downDetectorRing;  // down-detector level in dB (mono, post-upward boost)
 
     // Temp pull buffers
     std::array<float, kMaxPullSamples> tempL{};
@@ -111,6 +115,7 @@ class CompressorDisplay : public juce::Component,
     std::array<float, kRingSize> paintBufGR{};
     std::array<float, kRingSize> paintBufUpGR{};
     std::array<float, kRingSize> paintBufDetector{};
+    std::array<float, kRingSize> paintBufDownDetector{};
     std::array<float, kMaxDisplayWidth> paintBufAvgDb{};
 
     // --- Transfer curve cached parameters ---
@@ -124,7 +129,8 @@ class CompressorDisplay : public juce::Component,
     std::array<juce::TextButton, kNumTimeOptions> timeButtons;
 
     // --- Curve visibility flags ---
-    bool showDetectorCurve = true;
+    bool showUpDetectorCurve = true;
+    bool showDownDetectorCurve = true;
     bool showDownGr = true;
     bool showUpGr = true;
 
@@ -134,6 +140,7 @@ class CompressorDisplay : public juce::Component,
     const BeatSyncBuffer* downGrSyncBuf = nullptr;
     const BeatSyncBuffer* upGrSyncBuf = nullptr;
     const BeatSyncBuffer* detectorSyncBuf = nullptr;
+    const BeatSyncBuffer* downDetectorSyncBuf = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
 

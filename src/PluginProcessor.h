@@ -44,7 +44,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     AudioSampleFifo<2>& getInputFifo() { return m_inputFifo; }
     AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }  // downward GR
     AudioSampleFifo<2>& getUpGainReductionFifo() { return m_upGrFifo; }         // upward boost
-    AudioSampleFifo<2>& getDetectorFifo() { return m_detectorFifo; }
+    AudioSampleFifo<2>& getDetectorFifo() { return m_detectorFifo; }             // up-detector (raw input level)
+    AudioSampleFifo<2>& getDownDetectorFifo() { return m_downDetectorFifo; }    // down-detector (post-upward-boost level)
     SyncGlobals& getSyncGlobals() { return m_syncGlobals; }
 
     // Beat-sync buffer access (read-only pointers for UI)
@@ -52,6 +53,7 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
     const BeatSyncBuffer& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
     const BeatSyncBuffer& getDetectorSyncBuffer() const { return m_detectorSyncBuf; }
+    const BeatSyncBuffer& getDownDetectorSyncBuffer() const { return m_downDetectorSyncBuf; }
 
     /** Set the display range in beats (called from UI thread). */
     void setDisplayRangeBeats(double beats) {
@@ -110,12 +112,14 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     AudioSampleFifo<2> m_inputFifo;
     AudioSampleFifo<2> m_gainReductionFifo; // downward GR (linear, ≤ 1.0)
     AudioSampleFifo<2> m_upGrFifo;          // upward boost (linear, ≥ 1.0)
-    AudioSampleFifo<2> m_detectorFifo;
+    AudioSampleFifo<2> m_detectorFifo;         // up-detector level (raw input)
+    AudioSampleFifo<2> m_downDetectorFifo;    // down-detector level (post-upward-boost)
 
     // Temp buffers (reused each processBlock)
     juce::AudioBuffer<float> m_grBuffer;    // downward GR per-sample
     juce::AudioBuffer<float> m_upGrBuffer;  // upward boost per-sample
     juce::AudioBuffer<float> m_detectorBuffer;
+    juce::AudioBuffer<float> m_downDetectorBuffer;
 
     // DAW state tracking (BPM, sample rate, transport)
     SyncGlobals m_syncGlobals;
@@ -125,6 +129,7 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     BeatSyncBuffer m_grSyncBuf;     // downward GR
     BeatSyncBuffer m_upGrSyncBuf;   // upward boost
     BeatSyncBuffer m_detectorSyncBuf;
+    BeatSyncBuffer m_downDetectorSyncBuf;
     std::atomic<double> m_displayRangeBeats{4.0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessor)

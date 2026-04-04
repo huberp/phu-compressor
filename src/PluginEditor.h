@@ -54,7 +54,8 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::Label peakWindowLabel;
 
     // Curve visibility toggles
-    juce::ToggleButton showDetectorToggle;
+    juce::ToggleButton showDownDetectorToggle; // inside downward group
+    juce::ToggleButton showUpDetectorToggle;   // inside upward group
     juce::ToggleButton showDownGrToggle;
     juce::ToggleButton showUpGrToggle;
     juce::ToggleButton beatSyncToggle;

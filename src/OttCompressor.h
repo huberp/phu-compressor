@@ -8,15 +8,14 @@
 /**
  * OttCompressor — single-band downward + upward compressor, sequentially chained.
  *
- * Signal path (per sample):
- *   1. detectorDown detects on raw input → envDbDown
- *   2. downStage compresses → downGainDb, applied to input → intermediate
- *   3. detectorUp detects on intermediate (post-downward) signal → envDbUp
- *   4. upStage boosts → upGainDb, applied to intermediate → output
+ * Signal path (per sample, classic OTT order):
+ *   1. detectorUp detects on raw input (windowed + instantaneous max) → upward boost
+ *      applied to raw input → intermediate
+ *   2. detectorDown detects on intermediate → downward compression applied → output
  *
- * Each stage has its own VolumeDetector so it sees its correct input.
- * Gains are returned separately so the UI can display orange (down) and
- * green (up) overlays independently without ambiguity.
+ * Upward-first is the standard OTT signal flow: quiet parts get lifted, then the
+ * downward stage acts as a natural ceiling on the result, making the chain
+ * self-regulating.
  */
 template <typename SampleType>
 class OttCompressor {
@@ -31,6 +30,12 @@ class OttCompressor {
         detectorUp.prepare(spec);
         downStage.prepare(spec);
         upStage.prepare(spec);
+        // Fast peak-follower: instant rise, 5 ms decay.
+        // Provides transient protection without per-sample carrier-frequency noise.
+        constexpr SampleType kFastPeakMs = SampleType(5);
+        fastPeakDecay_ = std::exp(SampleType(-1)
+                                  / (static_cast<SampleType>(spec.sampleRate)
+                                     * kFastPeakMs * SampleType(0.001)));
         reset();
     }
 
@@ -39,6 +44,8 @@ class OttCompressor {
         detectorUp.reset();
         downStage.reset();
         upStage.reset();
+        for (auto& p : fastPeakUp_)
+            p = SampleType(0);
     }
 
     // ── Detector configuration (applied to both detectors) ───────────────
@@ -77,29 +84,45 @@ class OttCompressor {
     };
 
     Result processSampleWithGR(int channel, SampleType input) {
-        // Stage 1: downward compression on raw input
-        const SampleType envDbDown = detectorDown.processSample(channel, input);
+        // Stage 1: upward compression on raw input (classic OTT order).
+        // Quiet signals get boosted first.
+        //
+        // Transient protection via a fast peak-follower (5 ms decay, instant rise):
+        // the peak envelope tracks any above-threshold transient immediately but
+        // decays smoothly — unlike a raw per-sample abs(), which collapses to -inf
+        // at every zero crossing and causes the boost envelope to chase carrier-
+        // frequency noise, producing audible "wiggle" and display spikes.
+        const SampleType envDbUp = detectorUp.processSample(channel, input);
+        const SampleType absInput = std::abs(input);
+        fastPeakUp_[channel] = std::max(absInput, fastPeakUp_[channel] * fastPeakDecay_);
+        const SampleType levelForUp = std::max(envDbUp, linearToDb(fastPeakUp_[channel]));
+        const auto upResult          = upStage.processSample(channel, levelForUp);
+        const SampleType upGain      = dbToLinear(upResult.gainDb);
+        const SampleType intermediate = input * upGain;
+
+        // Stage 2: downward compression on the upward-boosted signal.
+        // Acts as a natural ceiling — tames anything the upward stage pushed up,
+        // making the chain self-regulating.
+        const SampleType envDbDown = detectorDown.processSample(channel, intermediate);
         const auto downResult      = downStage.processSample(channel, envDbDown);
         const SampleType downGain  = dbToLinear(downResult.gainDb);
-        const SampleType intermediate = input * downGain;
 
-        // Stage 2: upward compression.
-        // Detection is against the ORIGINAL input level, not intermediate.
-        // This ensures the upward stage never boosts a signal that was originally
-        // above the upward threshold — even if downward compression brought it
-        // below that threshold in intermediate.
-        // The boost is applied to intermediate (post-downward signal).
-        const SampleType envDbUp  = detectorUp.processSample(channel, input);
-        const auto upResult       = upStage.processSample(channel, envDbUp);
-        const SampleType upGain   = dbToLinear(upResult.gainDb);
-
-        return { intermediate * upGain, downGain, upGain };
+        return { intermediate * downGain, downGain, upGain };
     }
 
     // ── UI accessors ─────────────────────────────────────────────────────
 
-    // Returns the down-detector level (i.e. level of the input signal)
+    // Returns the raw input level from detectorUp.
+    // This is what the UI should display: the level of the original signal
+    // before any compression, so it lines up correctly against both thresholds
+    // on the transfer curve and waveform overlay.
     SampleType getDetectorLevelDb(int channel) const {
+        return detectorUp.getCurrentLevelDb(channel);
+    }
+
+    // Returns the intermediate level from detectorDown (post-upward-boost signal).
+    // Used by the downward-detector overlay line in the UI.
+    SampleType getDownDetectorLevelDb(int channel) const {
         return detectorDown.getCurrentLevelDb(channel);
     }
 
@@ -109,8 +132,20 @@ class OttCompressor {
         return std::exp(dB * kLog10Over20);
     }
 
+    static SampleType linearToDb(SampleType linear) {
+        return (linear > SampleType(1e-10))
+                   ? SampleType(20) * std::log10(linear)
+                   : SampleType(-200);
+    }
+
+    static constexpr int kMaxChannels = 2;
+
     VolumeDetector<SampleType>  detectorDown;
     VolumeDetector<SampleType>  detectorUp;
     CompressorStage<SampleType> downStage;
     CompressorStage<SampleType> upStage;
+
+    // Fast peak-follower state (per-channel): instant rise, ~5 ms decay.
+    SampleType fastPeakUp_[kMaxChannels] = {};
+    SampleType fastPeakDecay_            = SampleType(0);
 };

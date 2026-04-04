@@ -18,7 +18,8 @@ static const juce::Colour kGrFillColour{0xFFDD7700u};          // Deep amber (at
 static const juce::Colour kGrLineColour{0xFFFF9933u};          // Bright orange stroke
 static const juce::Colour kBoostFillColour{0xFFBB44AAu};       // Soft magenta (upward boost)
 static const juce::Colour kBoostLineColour{0xFFDD66CCu};       // Bright magenta stroke
-static const juce::Colour kDetectorCurveColour{0xFFEEFFFFu};   // Near-white cyan — detector level
+static const juce::Colour kDetectorCurveColour{0xFFEEFFFFu};    // Near-white cyan  — up-detector level (raw input)
+static const juce::Colour kDownDetectorCurveColour{0xFFFFE8D0u}; // Near-white orange — down-detector level (post-upward boost)
 static const juce::Colour kDownThreshHandleColour{0xFFFF4444u}; // Red
 static const juce::Colour kDownRatioHandleColour{0xFFFF8888u};  // Light red
 static const juce::Colour kUpThreshHandleColour{0xFF44FF44u};   // Green
@@ -123,11 +124,13 @@ void CompressorDisplay::setBeatSyncMode(bool enabled) {
 void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBuffer& input,
                                             const BeatSyncBuffer& downGr,
                                             const BeatSyncBuffer& upGr,
-                                            const BeatSyncBuffer& detector) {
-    inputSyncBuf    = &input;
-    downGrSyncBuf   = &downGr;
-    upGrSyncBuf     = &upGr;
-    detectorSyncBuf = &detector;
+                                            const BeatSyncBuffer& detector,
+                                            const BeatSyncBuffer& downDetector) {
+    inputSyncBuf        = &input;
+    downGrSyncBuf       = &downGr;
+    upGrSyncBuf         = &upGr;
+    detectorSyncBuf     = &detector;
+    downDetectorSyncBuf = &downDetector;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -181,7 +184,8 @@ void CompressorDisplay::readFromRing(const RingBuffer& ring, float* dest, int co
 void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
                                          AudioSampleFifo<2>& downGrFifo,
                                          AudioSampleFifo<2>& upGrFifo,
-                                         AudioSampleFifo<2>& detectorFifo) {
+                                         AudioSampleFifo<2>& detectorFifo,
+                                         AudioSampleFifo<2>& downDetectorFifo) {
     // Pull input samples (stereo → mono → dB → ring)
     {
         const int avail = inputFifo.getNumAvailable();
@@ -235,7 +239,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
         }
     }
 
-    // Pull detector level samples (stereo → mono → already in dB → ring)
+    // Pull up-detector level samples (stereo → mono → already in dB → ring)
     {
         const int avail = detectorFifo.getNumAvailable();
         const int toPull = juce::jmin(avail, kMaxPullSamples);
@@ -247,6 +251,21 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
                 tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, mono);
             }
             appendToRing(detectorRing, tempL.data(), got);
+        }
+    }
+
+    // Pull down-detector level samples (stereo → mono → already in dB → ring)
+    {
+        const int avail = downDetectorFifo.getNumAvailable();
+        const int toPull = juce::jmin(avail, kMaxPullSamples);
+        if (toPull > 0) {
+            float* ch[2] = {tempL.data(), tempR.data()};
+            int got = downDetectorFifo.pull(ch, toPull);
+            for (int i = 0; i < got; ++i) {
+                float mono = (tempL[static_cast<size_t>(i)] + tempR[static_cast<size_t>(i)]) * 0.5f;
+                tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, mono);
+            }
+            appendToRing(downDetectorRing, tempL.data(), got);
         }
     }
 }
@@ -306,14 +325,14 @@ void CompressorDisplay::paint(juce::Graphics& g) {
 
     if (beatSyncMode) {
         paintBeatSyncWaveform(g, wfArea);
-        if (showDetectorCurve)
+        if (showUpDetectorCurve || showDownDetectorCurve)
             paintBeatSyncDetector(g, wfArea);
         if (showDownGr || showUpGr)
             paintBeatSyncGainReduction(g, wfArea);
         paintPlayheadCursor(g, wfArea);
     } else {
         paintWaveform(g, wfArea);
-        if (showDetectorCurve)
+        if (showUpDetectorCurve || showDownDetectorCurve)
             paintDetectorCurve(g, wfArea);
         if (showDownGr || showUpGr)
             paintGainReduction(g, wfArea);
@@ -562,40 +581,47 @@ void CompressorDisplay::paintDetectorCurve(juce::Graphics& g,
         static_cast<int>(sampleRate * static_cast<double>(displayDurationMs) / 1000.0),
         kRingSize);
 
-    readFromRing(detectorRing, paintBufDetector.data(), displaySamples);
-
     const int w = area.getWidth();
     if (w <= 0 || displaySamples <= 0)
         return;
 
     const float samplesPerPixel = static_cast<float>(displaySamples) / static_cast<float>(w);
 
-    juce::Path detPath;
-    for (int px = 0; px < w; ++px) {
-        const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
-        int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
-        endSamp = juce::jmin(endSamp, displaySamples);
-
-        // Average samples in bin for a smooth line regardless of detector mode
-        float sum = 0.0f;
-        int count = 0;
-        for (int s = startSamp; s < endSamp; ++s) {
-            sum += paintBufDetector[static_cast<size_t>(s)];
-            ++count;
+    // Helper: build a path from a paint buffer
+    auto buildPath = [&](const std::array<float, kRingSize>& buf) {
+        juce::Path path;
+        for (int px = 0; px < w; ++px) {
+            const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
+            int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
+            endSamp = juce::jmin(endSamp, displaySamples);
+            float sum = 0.0f;
+            int count = 0;
+            for (int s = startSamp; s < endSamp; ++s) {
+                sum += buf[static_cast<size_t>(s)];
+                ++count;
+            }
+            float db   = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
+            float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+            float y    = area.getBottom() - norm * area.getHeight();
+            if (px == 0)
+                path.startNewSubPath(static_cast<float>(area.getX()), y);
+            else
+                path.lineTo(static_cast<float>(area.getX() + px), y);
         }
-        float db = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
+        return path;
+    };
 
-        float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
-        float y = area.getBottom() - norm * area.getHeight();
-
-        if (px == 0)
-            detPath.startNewSubPath(static_cast<float>(area.getX()), y);
-        else
-            detPath.lineTo(static_cast<float>(area.getX() + px), y);
+    if (showUpDetectorCurve) {
+        readFromRing(detectorRing, paintBufDetector.data(), displaySamples);
+        g.setColour(kDetectorCurveColour);
+        g.strokePath(buildPath(paintBufDetector), juce::PathStrokeType(2.0f));
     }
 
-    g.setColour(kDetectorCurveColour);
-    g.strokePath(detPath, juce::PathStrokeType(2.0f));
+    if (showDownDetectorCurve) {
+        readFromRing(downDetectorRing, paintBufDownDetector.data(), displaySamples);
+        g.setColour(kDownDetectorCurveColour);
+        g.strokePath(buildPath(paintBufDownDetector), juce::PathStrokeType(2.0f));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -836,41 +862,46 @@ void CompressorDisplay::paintBeatSyncWaveform(juce::Graphics& g,
 
 void CompressorDisplay::paintBeatSyncDetector(juce::Graphics& g,
                                                const juce::Rectangle<int>& area) {
-    if (detectorSyncBuf == nullptr || detectorSyncBuf->size() <= 0)
-        return;
-
-    const int numBins = detectorSyncBuf->size();
-    const float* bins = detectorSyncBuf->data();
     const int w = area.getWidth();
     if (w <= 0)
         return;
 
-    const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
-
-    juce::Path detPath;
-    for (int px = 0; px < w; ++px) {
-        const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
-        int endBin = static_cast<int>(static_cast<float>(px + 1) * binsPerPixel);
-        endBin = juce::jmin(endBin, numBins);
-        // Average bins for smooth display
-        float sum = 0.0f;
-        int count = 0;
-        for (int b = startBin; b < endBin; ++b) {
-            sum += bins[b];
-            ++count;
+    auto buildSyncPath = [&](const BeatSyncBuffer* buf) {
+        juce::Path path;
+        if (buf == nullptr || buf->size() <= 0)
+            return path;
+        const int numBins = buf->size();
+        const float* bins = buf->data();
+        const float binsPerPixel = static_cast<float>(numBins) / static_cast<float>(w);
+        for (int px = 0; px < w; ++px) {
+            const int startBin = static_cast<int>(static_cast<float>(px) * binsPerPixel);
+            int endBin = juce::jmin(static_cast<int>(static_cast<float>(px + 1) * binsPerPixel), numBins);
+            float sum = 0.0f;
+            int count = 0;
+            for (int b = startBin; b < endBin; ++b) {
+                sum += bins[b];
+                ++count;
+            }
+            float db   = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
+            float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+            float y    = area.getBottom() - norm * area.getHeight();
+            if (px == 0)
+                path.startNewSubPath(static_cast<float>(area.getX()), y);
+            else
+                path.lineTo(static_cast<float>(area.getX() + px), y);
         }
-        float db = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
-        float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
-        float y = area.getBottom() - norm * area.getHeight();
+        return path;
+    };
 
-        if (px == 0)
-            detPath.startNewSubPath(static_cast<float>(area.getX()), y);
-        else
-            detPath.lineTo(static_cast<float>(area.getX() + px), y);
+    if (showUpDetectorCurve) {
+        g.setColour(kDetectorCurveColour);
+        g.strokePath(buildSyncPath(detectorSyncBuf), juce::PathStrokeType(2.0f));
     }
 
-    g.setColour(kDetectorCurveColour);
-    g.strokePath(detPath, juce::PathStrokeType(2.0f));
+    if (showDownDetectorCurve) {
+        g.setColour(kDownDetectorCurveColour);
+        g.strokePath(buildSyncPath(downDetectorSyncBuf), juce::PathStrokeType(2.0f));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -37,12 +37,14 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_gainReductionFifo.reset();
     m_upGrFifo.reset();
     m_detectorFifo.reset();
+    m_downDetectorFifo.reset();
 
     // Pre-allocate temp buffers with headroom — never reallocate on the audio thread
     const int bufSize = juce::jmax(samplesPerBlock, 8192);
     m_grBuffer.setSize(2, bufSize);
     m_upGrBuffer.setSize(2, bufSize);
     m_detectorBuffer.setSize(2, bufSize);
+    m_downDetectorBuffer.setSize(2, bufSize);
     m_syncGlobals.updateSampleRate(sampleRate);
 
     // Beat-sync buffers: 4096 bins for position-indexed display
@@ -50,6 +52,7 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_grSyncBuf.prepare(4096);
     m_upGrSyncBuf.prepare(4096);
     m_detectorSyncBuf.prepare(4096);
+    m_downDetectorSyncBuf.prepare(4096);
 }
 
 void PhuCompressorAudioProcessor::releaseResources() {
@@ -101,19 +104,22 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Temp buffers pre-allocated in prepareToPlay — no runtime allocation
     jassert(m_grBuffer.getNumSamples() >= numSamples);
     jassert(m_detectorBuffer.getNumSamples() >= numSamples);
+    jassert(m_downDetectorBuffer.getNumSamples() >= numSamples);
 
     // Process with gain reduction + detector level tracking
     for (int ch = 0; ch < numChannels && ch < 2; ++ch) {
-        float* channelData = buffer.getWritePointer(ch);
-        float* grData      = m_grBuffer.getWritePointer(ch);
-        float* upGrData    = m_upGrBuffer.getWritePointer(ch);
-        float* detData     = m_detectorBuffer.getWritePointer(ch);
+        float* channelData    = buffer.getWritePointer(ch);
+        float* grData         = m_grBuffer.getWritePointer(ch);
+        float* upGrData       = m_upGrBuffer.getWritePointer(ch);
+        float* detData        = m_detectorBuffer.getWritePointer(ch);
+        float* downDetData    = m_downDetectorBuffer.getWritePointer(ch);
         for (int i = 0; i < numSamples; ++i) {
             auto [output, downGain, upGain] = compressor.processSampleWithGR(ch, channelData[i]);
             channelData[i] = output;
-            grData[i]   = downGain;  // linear, ≤ 1.0
-            upGrData[i] = upGain;    // linear, ≥ 1.0
-            detData[i]  = compressor.getDetectorLevelDb(ch);
+            grData[i]      = downGain;  // linear, ≤ 1.0
+            upGrData[i]    = upGain;    // linear, ≥ 1.0
+            detData[i]     = compressor.getDetectorLevelDb(ch);      // raw input level
+            downDetData[i] = compressor.getDownDetectorLevelDb(ch);  // post-upward-boost level
         }
     }
 
@@ -135,11 +141,17 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                                  : m_upGrBuffer.getReadPointer(0)};
     m_upGrFifo.push(upGrPtrs, numSamples);
 
-    // Push detector level values to FIFO (for UI detector curve overlay)
+    // Push detector level values to FIFO (up-detector = raw input level)
     const float* detPtrs[2] = {m_detectorBuffer.getReadPointer(0),
                                 numChannels > 1 ? m_detectorBuffer.getReadPointer(1)
                                                 : m_detectorBuffer.getReadPointer(0)};
     m_detectorFifo.push(detPtrs, numSamples);
+
+    // Push down-detector level values to FIFO (post-upward-boost level)
+    const float* downDetPtrs[2] = {m_downDetectorBuffer.getReadPointer(0),
+                                    numChannels > 1 ? m_downDetectorBuffer.getReadPointer(1)
+                                                    : m_downDetectorBuffer.getReadPointer(0)};
+    m_downDetectorFifo.push(downDetPtrs, numSamples);
 
     // Beat-sync buffer writes: per-sample PPQ → normalised position → bin
     {
@@ -169,11 +181,13 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
                 // Detector: stereo → mono (already in dB)
                 const float detDb = (detPtrs[0][i] + detPtrs[1][i]) * 0.5f;
+                const float downDetDb = (downDetPtrs[0][i] + downDetPtrs[1][i]) * 0.5f;
 
                 m_inputSyncBuf.write(normPos, inDb);
                 m_grSyncBuf.write(normPos, grDb);
                 m_upGrSyncBuf.write(normPos, upDb);
                 m_detectorSyncBuf.write(normPos, detDb);
+                m_downDetectorSyncBuf.write(normPos, downDetDb);
             }
             m_syncGlobals.setPpqEndOfBlock(blockPpq + numSamples * ppqPerSample);
         }
