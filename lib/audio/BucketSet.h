@@ -40,7 +40,7 @@ class BucketSet {
     /** Selects the bucket-size formula used in recompute(). */
     enum class Kind { Rms, Cancel };
 
-    static constexpr int kMaxRmsBuckets    = 128;
+    static constexpr int kMaxRmsBuckets    = 512;
     static constexpr int kMaxCancelBuckets = 256;
 
     explicit BucketSet(Kind kind) : m_kind(kind) {}
@@ -230,7 +230,7 @@ class BucketSet {
         if (m_kind == Kind::Rms) {
             if (displayBeats <= 0.0) return 1;
             const int sz = static_cast<int>(static_cast<double>(bufferSize)
-                                            / (displayBeats * 16.0));
+                                            / kMaxRmsBuckets);
             return std::max(1, sz);
         } else {
             // Kind::Cancel: ~4 ms per bucket

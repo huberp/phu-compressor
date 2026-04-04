@@ -76,6 +76,17 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
         rmsBeatDivCombo.addItem(kDetectorBeatLabels[i], i + 1);
     addAndMakeVisible(rmsBeatDivCombo);
 
+    // Re-sync combo selections: attachments fired before items were populated,
+    // so the initial sync had no effect. Restore correct display now.
+    detectorTypeCombo.setSelectedItemIndex(
+        static_cast<int>(p.getAPVTS().getRawParameterValue(
+            PhuCompressorAudioProcessor::kParamDetectorType)->load()),
+        juce::dontSendNotification);
+    rmsBeatDivCombo.setSelectedItemIndex(
+        static_cast<int>(p.getAPVTS().getRawParameterValue(
+            PhuCompressorAudioProcessor::kParamRmsBeatDiv)->load()),
+        juce::dontSendNotification);
+
     // Peak window slider
     setupSlider(peakWindowSlider, peakWindowLabel, "Window (ms)", this);
 
