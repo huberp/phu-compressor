@@ -1,13 +1,17 @@
 #pragma once
 
 #include "OttCompressor.h"
+#include "PluginConstants.h"
 #include "audio/AudioSampleFifo.h"
 #include "audio/BeatSyncBuffer.h"
+#include "audio/RmsPacketFifo.h"
 #include "events/SyncGlobals.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
 using phu::audio::AudioSampleFifo;
 using phu::audio::BeatSyncBuffer;
+using phu::audio::RmsPacketFifo;
+using phu::audio::RmsPacket;
 using phu::events::SyncGlobals;
 
 class PhuCompressorAudioProcessor : public juce::AudioProcessor {
@@ -42,14 +46,27 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
     AudioSampleFifo<2>& getInputFifo() { return m_inputFifo; }
-    AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }
-    AudioSampleFifo<2>& getDetectorFifo() { return m_detectorFifo; }
+    AudioSampleFifo<2>& getGainReductionFifo() { return m_gainReductionFifo; }  // downward GR
+    AudioSampleFifo<2>& getUpGainReductionFifo() { return m_upGrFifo; }         // upward boost
+    RmsPacketFifo& getDetectorPacketFifo()      { return m_detectorPacketFifo; }      // up-detector
+    RmsPacketFifo& getDownDetectorPacketFifo()  { return m_downDetectorPacketFifo; }  // down-detector
     SyncGlobals& getSyncGlobals() { return m_syncGlobals; }
+
+    struct DetectorInfo {
+        float upMs; float downMs;
+        DetectorMode upMode; DetectorMode downMode;
+    };
+    DetectorInfo getDetectorInfo() const {
+        return { compressor.getUpDetectorWindowMs(),
+                 compressor.getDownDetectorWindowMs(),
+                 compressor.getUpDetectorMode(),
+                 compressor.getDownDetectorMode() };
+    }
 
     // Beat-sync buffer access (read-only pointers for UI)
     const BeatSyncBuffer& getInputSyncBuffer() const { return m_inputSyncBuf; }
-    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }
-    const BeatSyncBuffer& getDetectorSyncBuffer() const { return m_detectorSyncBuf; }
+    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
+    const BeatSyncBuffer& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
 
     /** Set the display range in beats (called from UI thread). */
     void setDisplayRangeBeats(double beats) {
@@ -73,11 +90,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     static constexpr const char* kParamRmsBeatDiv   = "rms_beat_div";
     static constexpr const char* kParamPeakWindowMs  = "peak_window_ms";
 
-    // Beat-division fractions (must match ComboBox item order of rmsBeatDivCombo in PluginEditor)
-   static constexpr int   kNumBeatDivisions = 8;
-   static constexpr float kBeatFractions[kNumBeatDivisions] = {
-    0.03125f, 0.0625f, 0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f };
-    //  1/32  1/16     1/8     1/4    1/2   1     2     4
+    // Beat-division fractions and labels live in PluginConstants.h (kDetector*).
+    // kDetectorNumDivisions, kDetectorBeatFractions, kDetectorBeatLabels.
 
   private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -106,20 +120,32 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
 
     // Lock-free FIFOs for audio→UI data transfer
     AudioSampleFifo<2> m_inputFifo;
-    AudioSampleFifo<2> m_gainReductionFifo;
-    AudioSampleFifo<2> m_detectorFifo;
+    AudioSampleFifo<2> m_gainReductionFifo; // downward GR (linear, ≤ 1.0)
+    AudioSampleFifo<2> m_upGrFifo;          // upward boost (linear, ≥ 1.0)
+
+    // Packet FIFOs for detector levels (batched, PPQ-anchored)
+    RmsPacketFifo m_detectorPacketFifo;     // up-detector level (raw input)
+    RmsPacketFifo m_downDetectorPacketFifo; // down-detector level (post-upward-boost)
+
+    // Accumulation state: collect ~kRmsAccumBlocks blocks before pushing a packet
+    static constexpr int kRmsAccumBlocks = 4;
+    std::array<float, phu::audio::kRmsMaxPacketSamples> m_detAccumBuf{};
+    std::array<float, phu::audio::kRmsMaxPacketSamples> m_downDetAccumBuf{};
+    int    m_accumCount      = 0;
+    int    m_accumBlockCount = 0;
+    double m_accumStartPpq   = 0.0;
 
     // Temp buffers (reused each processBlock)
-    juce::AudioBuffer<float> m_grBuffer;
-    juce::AudioBuffer<float> m_detectorBuffer;
+    juce::AudioBuffer<float> m_grBuffer;    // downward GR per-sample
+    juce::AudioBuffer<float> m_upGrBuffer;  // upward boost per-sample
 
     // DAW state tracking (BPM, sample rate, transport)
     SyncGlobals m_syncGlobals;
 
     // Beat-sync position-indexed buffers (written per-sample in processBlock)
     BeatSyncBuffer m_inputSyncBuf;
-    BeatSyncBuffer m_grSyncBuf;
-    BeatSyncBuffer m_detectorSyncBuf;
+    BeatSyncBuffer m_grSyncBuf;     // downward GR
+    BeatSyncBuffer m_upGrSyncBuf;   // upward boost
     std::atomic<double> m_displayRangeBeats{4.0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessor)

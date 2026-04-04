@@ -10,9 +10,23 @@ enum class StageDirection { Downward, Upward };
  * CompressorStage — one independent compressor stage (downward or upward).
  *
  * Per-sample pipeline:
- *   1. Trigger:   binary 0/1 based on whether envDb crosses the threshold
- *   2. Gate:      one-pole ballistics smoother on the trigger (attack/release)
- *   3. Gain:      smoothedGate * level-proportional dB value
+ *   1. Compute targetGainDb from the RAW (unsmoothed) detector level:
+ *        Downward: targetGainDb = -max(envDb - thresh, 0) * (1 - 1/ratio)   ≤ 0
+ *        Upward:   targetGainDb = +max(thresh - envDb, 0) * (1 - 1/ratio)   ≥ 0
+ *
+ *   2. Smooth gainEnv toward targetGainDb with one-pole ballistics:
+ *        Attack  = gain magnitude INCREASING (compressor/boost engaging)
+ *        Release = gain magnitude DECREASING (compressor/boost releasing toward 0)
+ *
+ * Why this is correct:
+ *   Target for the upward stage is INSTANTANEOUSLY 0 whenever the raw level is
+ *   above threshold. The one-pole smoother can only move toward its target —
+ *   it never overshoots. Therefore upward boost is IMPOSSIBLE on above-threshold
+ *   content in steady state, regardless of release time.
+ *
+ *   Contrast with level-smoothing: smoothing the level first means the smoothed
+ *   level stays below threshold for [release-time] after a transient arrives,
+ *   producing a boost tail on the transient — a fundamental design flaw.
  *
  * Two instances (one Downward, one Upward) are composed inside OttCompressor.
  */
@@ -32,13 +46,16 @@ class CompressorStage {
     }
 
     void reset() {
+        // gainEnv starts at 0 (no compression, no boost) for both stages.
+        // This is correct: targetGainDb is also 0 when signal starts at 0,
+        // so there is no initial error to smooth away.
         for (int ch = 0; ch < kMaxChannels; ++ch)
-            smoothedGate[ch] = SampleType(0);
+            gainEnv[ch] = SampleType(0);
     }
 
     // ── Configuration ────────────────────────────────────────────────────
 
-    void setDirection(StageDirection d) { direction = d; }
+    void setDirection(StageDirection d) { direction = d; reset(); }
 
     void setThresholdDb(SampleType dB) { threshDb = dB; }
 
@@ -58,43 +75,45 @@ class CompressorStage {
 
     struct Result {
         SampleType gainDb;
-        SampleType gate;  // smoothed gate value [0..1] for UI/metrics
+        SampleType gate;  // abs(gainDb) for UI/metrics
     };
 
     Result processSample(int channel, SampleType envDb) {
-        // Stage 1: binary trigger
-        const SampleType trigger = computeTrigger(envDb);
-
-        // Stage 2: gate ballistics (one-pole smoother)
-        SampleType& gate = smoothedGate[channel];
-        const SampleType coeff = (trigger > gate) ? attackCoeff : releaseCoeff;
-        gate = trigger + coeff * (gate - trigger);
-
-        // Stage 3: gain computation (gate modulates level-proportional dB)
-        SampleType gainDb;
+        // Step 1: instantaneous target gain from the raw detector level.
+        // Target is IMMEDIATELY 0 when the signal is in the "wrong" zone —
+        // above threshold for Downward, or below threshold for Upward.
+        // This is the key property that prevents above-threshold boosting.
+        SampleType targetGainDb;
         if (direction == StageDirection::Downward) {
-            // Reduce gain when above threshold
-            const SampleType excess = envDb - threshDb;
-            gainDb = -gate * std::max(excess, SampleType(0))
-                     * (SampleType(1) - SampleType(1) / ratio);
+            const SampleType excess = std::max(envDb - threshDb, SampleType(0));
+            targetGainDb = -excess * (SampleType(1) - SampleType(1) / ratio); // ≤ 0
         } else {
-            // Boost gain when below threshold
-            const SampleType deficit = threshDb - envDb;
-            gainDb = gate * std::max(deficit, SampleType(0))
-                     * (SampleType(1) - SampleType(1) / ratio);
+            // Clamp env to the noise floor before computing deficit.
+            // Below kUpwardFloorDb the signal is effectively noise — boosting it
+            // further would amplify the noise floor rather than musical content,
+            // and would cause the max boost to become independent of threshold.
+            const SampleType clampedEnv = std::max(envDb, kUpwardFloorDb);
+            const SampleType deficit = std::max(threshDb - clampedEnv, SampleType(0));
+            targetGainDb = deficit * (SampleType(1) - SampleType(1) / ratio); // ≥ 0
         }
 
-        return { gainDb, gate };
+        // Step 2: one-pole ballistics on gainEnv toward targetGainDb.
+        //   Attack  = gain magnitude increasing (effect engaging)
+        //   Release = gain magnitude decreasing (effect releasing toward 0)
+        //
+        // For Downward: magnitude grows when gain goes more negative → target < gainEnv
+        // For Upward:   magnitude grows when gain goes more positive → target > gainEnv
+        SampleType& genv = gainEnv[channel];
+        const bool attacking = (direction == StageDirection::Downward)
+                                   ? (targetGainDb < genv)
+                                   : (targetGainDb > genv);
+        const SampleType coeff = attacking ? attackCoeff : releaseCoeff;
+        genv = targetGainDb + coeff * (genv - targetGainDb);
+
+        return { genv, std::abs(genv) };
     }
 
   private:
-    SampleType computeTrigger(SampleType envDb) const {
-        if (direction == StageDirection::Downward)
-            return (envDb > threshDb) ? SampleType(1) : SampleType(0);
-        else
-            return (envDb < threshDb) ? SampleType(1) : SampleType(0);
-    }
-
     SampleType msToCoeff(SampleType timeMs) const {
         return (timeMs < SampleType(0.001))
                    ? SampleType(0)
@@ -105,6 +124,13 @@ class CompressorStage {
         attackCoeff  = msToCoeff(attackMs);
         releaseCoeff = msToCoeff(releaseMs);
     }
+
+    // ── Constants ────────────────────────────────────────────────────────
+
+    // Noise floor for the upward stage: signals below this are treated as silence.
+    // Prevents boosting quantization/circuit noise and keeps max boost proportional
+    // to threshold, making the display and audio behaviour predictable.
+    static constexpr SampleType kUpwardFloorDb = SampleType(-80);
 
     // ── State ────────────────────────────────────────────────────────────
 
@@ -120,5 +146,5 @@ class CompressorStage {
     SampleType attackCoeff   { SampleType(0) };
     SampleType releaseCoeff  { SampleType(0) };
 
-    SampleType smoothedGate[kMaxChannels] = {};
+    SampleType gainEnv[kMaxChannels] = {};
 };

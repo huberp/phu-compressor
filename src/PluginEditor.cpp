@@ -72,26 +72,48 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     rmsBeatDivLabel.setJustificationType(juce::Justification::centredLeft);
     rmsBeatDivLabel.setFont(juce::FontOptions(11.0f));
     addAndMakeVisible(rmsBeatDivLabel);
-    rmsBeatDivCombo.addItem("1/32", 1);
-    rmsBeatDivCombo.addItem("1/16", 2);
-    rmsBeatDivCombo.addItem("1/8", 3);
-    rmsBeatDivCombo.addItem("1/4", 4);
-    rmsBeatDivCombo.addItem("1/2", 5);
-    rmsBeatDivCombo.addItem("1", 6);
-    rmsBeatDivCombo.addItem("2", 7);
-    rmsBeatDivCombo.addItem("4", 8);
+    for (int i = 0; i < kDetectorNumDivisions; ++i)
+        rmsBeatDivCombo.addItem(kDetectorBeatLabels[i], i + 1);
     addAndMakeVisible(rmsBeatDivCombo);
+
+    // Re-sync combo selections: attachments fired before items were populated,
+    // so the initial sync had no effect. Restore correct display now.
+    detectorTypeCombo.setSelectedItemIndex(
+        static_cast<int>(p.getAPVTS().getRawParameterValue(
+            PhuCompressorAudioProcessor::kParamDetectorType)->load()),
+        juce::dontSendNotification);
+    rmsBeatDivCombo.setSelectedItemIndex(
+        static_cast<int>(p.getAPVTS().getRawParameterValue(
+            PhuCompressorAudioProcessor::kParamRmsBeatDiv)->load()),
+        juce::dontSendNotification);
 
     // Peak window slider
     setupSlider(peakWindowSlider, peakWindowLabel, "Window (ms)", this);
 
-    // Curve visibility toggles
-    showDetectorToggle.setButtonText("Detector");
-    showDetectorToggle.setToggleState(true, juce::dontSendNotification);
-    showDetectorToggle.onClick = [this]() {
-        compressorDisplay.setShowDetectorCurve(showDetectorToggle.getToggleState());
+    // RMS info readout label
+    rmsInfoLabel.setJustificationType(juce::Justification::centred);
+    rmsInfoLabel.setFont(juce::FontOptions(9.0f));
+    rmsInfoLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
+    addAndMakeVisible(rmsInfoLabel);
+
+    // Per-stage detector level line toggles
+    showDownDetectorToggle.setButtonText("Level");
+    showDownDetectorToggle.setToggleState(true, juce::dontSendNotification);
+    showDownDetectorToggle.setColour(juce::ToggleButton::textColourId,
+                                     juce::Colour{0xFFFFE8D0u});
+    showDownDetectorToggle.onClick = [this]() {
+        compressorDisplay.setShowDownDetectorCurve(showDownDetectorToggle.getToggleState());
     };
-    addAndMakeVisible(showDetectorToggle);
+    addAndMakeVisible(showDownDetectorToggle);
+
+    showUpDetectorToggle.setButtonText("Level");
+    showUpDetectorToggle.setToggleState(true, juce::dontSendNotification);
+    showUpDetectorToggle.setColour(juce::ToggleButton::textColourId,
+                                   juce::Colour{0xFFEEFFFFu});
+    showUpDetectorToggle.onClick = [this]() {
+        compressorDisplay.setShowUpDetectorCurve(showUpDetectorToggle.getToggleState());
+    };
+    addAndMakeVisible(showUpDetectorToggle);
 
     showDownGrToggle.setButtonText("Down GR");
     showDownGrToggle.setToggleState(true, juce::dontSendNotification);
@@ -132,11 +154,11 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     // Wire beat-sync buffer pointers
     compressorDisplay.setBeatSyncBuffers(p.getInputSyncBuffer(),
                                           p.getGRSyncBuffer(),
-                                          p.getDetectorSyncBuffer());
+                                          p.getUpGRSyncBuffer());
 
     updateDetectorControlVisibility();
 
-    setSize(800, 590);
+    setSize(800, 644);
     startTimerHz(60);
 }
 
@@ -153,7 +175,8 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
         rmsWindowSlider.isVisible() != (isRms && !isSynced) ||
         rmsSyncToggle.isVisible()   != isRms                ||
         rmsBeatDivCombo.isVisible() != (isRms && isSynced)  ||
-        peakWindowSlider.isVisible()!= (!isRms);
+        peakWindowSlider.isVisible()!= (!isRms)             ||
+        rmsInfoLabel.isVisible()    != isRms;
 
     rmsWindowSlider.setVisible(isRms && !isSynced);
     rmsWindowLabel.setVisible(isRms && !isSynced);
@@ -162,6 +185,7 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
     rmsBeatDivLabel.setVisible(isRms && isSynced);
     peakWindowSlider.setVisible(!isRms);
     peakWindowLabel.setVisible(!isRms);
+    rmsInfoLabel.setVisible(isRms);
 
     if (visChanged)
         resized();
@@ -184,11 +208,26 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
     // Pull data from FIFOs and repaint
     compressorDisplay.updateFromFifos(audioProcessor.getInputFifo(),
                                        audioProcessor.getGainReductionFifo(),
-                                       audioProcessor.getDetectorFifo());
+                                       audioProcessor.getUpGainReductionFifo(),
+                                       audioProcessor.getDetectorPacketFifo(),
+                                       audioProcessor.getDownDetectorPacketFifo());
     compressorDisplay.repaint();
 
     // Update detector control visibility based on current parameter values
     updateDetectorControlVisibility();
+
+    // Live detector info readout
+    if (rmsInfoLabel.isVisible()) {
+        const auto info = audioProcessor.getDetectorInfo();
+        auto modeStr = [](DetectorMode m) -> const char* {
+            return m == DetectorMode::RMS ? "RMS" : "Peak";
+        };
+        rmsInfoLabel.setText(
+            juce::String(info.downMs, 1) + "/" + modeStr(info.downMode)
+            + " | "
+            + juce::String(info.upMs, 1) + "/" + modeStr(info.upMode),
+            juce::dontSendNotification);
+    }
 }
 
 void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
@@ -221,8 +260,8 @@ void PhuCompressorAudioProcessorEditor::resized() {
         return 2 * kGroupPaddingV + contentHeight;
     };
 
-    // ── Downward group (4 rows) ──────────────────────────────────────────
-    auto downGroupArea = sliderArea.removeFromTop(computeGroupHeight(4));
+    // ── Downward group (4 sliders + detector toggle = 5 rows) ───────────────
+    auto downGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
     downwardGroup.setBounds(downGroupArea);
     {
         auto content = downGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -236,11 +275,14 @@ void PhuCompressorAudioProcessorEditor::resized() {
         layoutRow(downRatioLabel, downRatioSlider);
         layoutRow(downAttackLabel, downAttackSlider);
         layoutRow(downReleaseLabel, downReleaseSlider);
+        // Detector level toggle
+        auto toggleRow = content.removeFromTop(kRowHeight);
+        showDownDetectorToggle.setBounds(toggleRow);
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Upward group (4 rows) ────────────────────────────────────────────
-    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(4));
+    // ── Upward group (4 sliders + detector toggle = 5 rows) ─────────────────
+    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
     upwardGroup.setBounds(upGroupArea);
     {
         auto content = upGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -254,6 +296,9 @@ void PhuCompressorAudioProcessorEditor::resized() {
         layoutRow(upRatioLabel, upRatioSlider);
         layoutRow(upAttackLabel, upAttackSlider);
         layoutRow(upReleaseLabel, upReleaseSlider);
+        // Detector level toggle
+        auto toggleRow = content.removeFromTop(kRowHeight);
+        showUpDetectorToggle.setBounds(toggleRow);
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
@@ -264,7 +309,8 @@ void PhuCompressorAudioProcessorEditor::resized() {
     // Peak: Type + Window = 2 rows
     // RMS unsynced: Type + Window + Sync = 3 rows
     // RMS synced:   Type + Sync + Beat Div = 3 rows
-    const int detRows  = isRms ? 3 : 2;
+    // RMS (any):    +1 row for info label below beat div / sync toggle
+    const int detRows  = isRms ? 4 : 2;
 
     auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(detRows));
     detectorGroup.setBounds(detGroupArea);
@@ -294,14 +340,17 @@ void PhuCompressorAudioProcessorEditor::resized() {
             layoutComboRow(rmsBeatDivLabel, rmsBeatDivCombo);
         if (!isRms)
             layoutSliderRow(peakWindowLabel, peakWindowSlider);
+        if (isRms) {
+            auto row = content.removeFromTop(kRowHeight);
+            rmsInfoLabel.setBounds(row);
+        }
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Curve visibility toggles ─────────────────────────────────────────
+    // ── Curve visibility toggles (Down GR + Up GR) ───────────────────────────
     {
         auto toggleRow = sliderArea.removeFromTop(kRowHeight);
-        int toggleWidth = toggleRow.getWidth() / 3;
-        showDetectorToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
+        int toggleWidth = toggleRow.getWidth() / 2;
         showDownGrToggle.setBounds(toggleRow.removeFromLeft(toggleWidth));
         showUpGrToggle.setBounds(toggleRow);
     }

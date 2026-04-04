@@ -22,16 +22,29 @@ template <typename SampleType>
 class VolumeDetector {
   public:
     static constexpr int kMaxChannels = 2;
-    // Max window: 1 second at 96 kHz
-    static constexpr int kMaxWindowSamples = 96000;
 
-    VolumeDetector() = default;
+        struct LevelValues {
+                SampleType rms;
+                SampleType db;
+        };
+
+    /**
+     * maxWindowMs — the maximum window length this instance will ever be asked to use.
+     * The ring buffer is pre-allocated to this size (in samples at the actual sample rate)
+     * during prepare(), so no allocation happens on the audio thread.
+     * Caller is responsible for passing a value large enough for the worst-case BPM/beat
+     * combination they intend to use. See PluginConstants.h:kDetectorMaxWindowMs.
+     */
+    explicit VolumeDetector(SampleType maxWindowMs = SampleType(6000))
+        : maxWindowMs_(maxWindowMs) {}
 
     void prepare(const juce::dsp::ProcessSpec& spec) {
         sampleRate = static_cast<SampleType>(spec.sampleRate);
-        for (int ch = 0; ch < kMaxChannels; ++ch) {
-            ringBuf[ch].resize(static_cast<size_t>(kMaxWindowSamples), SampleType(0));
-        }
+        // Allocate exactly enough for the declared max window at this sample rate.
+        // Adding 1 guards against floating-point truncation at the boundary.
+        bufCapacity_ = static_cast<int>(sampleRate * maxWindowMs_ / SampleType(1000)) + 1;
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            ringBuf[ch].assign(static_cast<size_t>(bufCapacity_), SampleType(0));
         recomputeWindowSize();
         reset();
     }
@@ -42,12 +55,16 @@ class VolumeDetector {
             writePos[ch] = 0;
             runningSum[ch] = SampleType(0);
             currentMax[ch] = SampleType(0);
+            currentLevelLinear[ch] = SampleType(0);
             currentLevelDb[ch] = SampleType(-120);
             samplesWritten[ch] = 0;
         }
     }
 
     void setMode(DetectorMode m) { mode = m; }
+    DetectorMode getMode() const { return mode; }
+
+    SampleType getWindowMs() const { return windowMs; }
 
     void setWindowMs(SampleType ms) {
         ms = std::max(ms, SampleType(0.1));
@@ -57,9 +74,9 @@ class VolumeDetector {
     }
 
     /**
-     * Process one sample and return the detector level in dB.
+     * Process one sample and return both the raw detector value and its dB form.
      */
-    SampleType processSample(int channel, SampleType input) {
+    LevelValues processSample(int channel, SampleType input) {
         const SampleType absVal = std::abs(input);
         SampleType levelLinear;
 
@@ -70,8 +87,13 @@ class VolumeDetector {
         }
 
         const SampleType db = linearToDb(levelLinear);
+        currentLevelLinear[channel] = levelLinear;
         currentLevelDb[channel] = db;
-        return db;
+        return { levelLinear, db };
+    }
+
+    SampleType getCurrentLevelLinear(int channel) const {
+        return currentLevelLinear[channel];
     }
 
     SampleType getCurrentLevelDb(int channel) const {
@@ -130,8 +152,10 @@ class VolumeDetector {
     }
 
     void recomputeWindowSize() {
+        // bufCapacity_ is 0 before prepare() — guard so setWindowMs() is safe to call early.
+        const int cap = (bufCapacity_ > 0) ? bufCapacity_ : 1;
         int newSize = static_cast<int>(sampleRate * windowMs / SampleType(1000));
-        newSize = std::max(1, std::min(newSize, kMaxWindowSamples));
+        newSize = std::max(1, std::min(newSize, cap));
         if (newSize != windowSamples) {
             windowSamples = newSize;
             // Lightweight reset — no buffer zeroing (safe for audio thread)
@@ -139,6 +163,7 @@ class VolumeDetector {
                 writePos[ch] = 0;
                 runningSum[ch] = SampleType(0);
                 currentMax[ch] = SampleType(0);
+                currentLevelLinear[ch] = SampleType(0);
                 samplesWritten[ch] = 0;
             }
         }
@@ -152,10 +177,12 @@ class VolumeDetector {
     }
 
     // ── State ────────────────────────────────────────────────────────────
-    SampleType sampleRate  { SampleType(44100) };
-    SampleType windowMs    { SampleType(50) };
-    int windowSamples      { 2205 }; // 50ms at 44100
-    DetectorMode mode      { DetectorMode::RMS };
+    SampleType maxWindowMs_  { SampleType(6000) };  ///< set by constructor, immutable after that
+    int        bufCapacity_  { 0 };                 ///< set in prepare(), ring buffer size in samples
+    SampleType sampleRate    { SampleType(44100) };
+    SampleType windowMs      { SampleType(50) };
+    int        windowSamples { 2205 };              ///< 50 ms at 44.1 kHz
+    DetectorMode mode        { DetectorMode::RMS };
 
     // Per-channel ring buffers
     // RMS mode stores squared values; PeakMax stores absolute values
@@ -163,6 +190,7 @@ class VolumeDetector {
     int writePos[kMaxChannels]         = {};
     SampleType runningSum[kMaxChannels] = {};  // RMS running sum of squares
     SampleType currentMax[kMaxChannels] = {};  // PeakMax current window max
+    SampleType currentLevelLinear[kMaxChannels] = {};
     SampleType currentLevelDb[kMaxChannels] = { SampleType(-120), SampleType(-120) };
 
     int samplesWritten[kMaxChannels] = {};

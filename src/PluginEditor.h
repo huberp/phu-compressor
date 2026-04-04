@@ -52,9 +52,11 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::Label rmsBeatDivLabel;
     juce::Slider peakWindowSlider;
     juce::Label peakWindowLabel;
+    juce::Label rmsInfoLabel;   // live window-ms / mode readout (RMS mode only)
 
     // Curve visibility toggles
-    juce::ToggleButton showDetectorToggle;
+    juce::ToggleButton showDownDetectorToggle; // inside downward group
+    juce::ToggleButton showUpDetectorToggle;   // inside upward group
     juce::ToggleButton showDownGrToggle;
     juce::ToggleButton showUpGrToggle;
     juce::ToggleButton beatSyncToggle;
