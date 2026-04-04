@@ -15,6 +15,7 @@ target_sources(phu-compressor PRIVATE
     PluginEditor.cpp
     PluginEditor.h
     OttCompressor.h
+    PluginConstants.h
     VolumeDetector.h
     CompressorStage.h
     CompressorDisplay.cpp

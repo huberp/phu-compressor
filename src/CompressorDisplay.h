@@ -1,12 +1,17 @@
 #pragma once
 
+#include "PluginConstants.h"
 #include "audio/AudioSampleFifo.h"
 #include "audio/BeatSyncBuffer.h"
+#include "audio/BucketSet.h"
+#include "audio/RmsPacketFifo.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using phu::audio::AudioSampleFifo;
 using phu::audio::BeatSyncBuffer;
+using phu::audio::RmsPacketFifo;
+using phu::audio::RmsPacket;
 
 /**
  * CompressorDisplay — unified dB-based panel containing:
@@ -31,12 +36,8 @@ class CompressorDisplay : public juce::Component,
     static constexpr float kMaxDb = 0.0f;
     static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
 
-    // Musical time options (in beats) — used for both scrolling and beat-sync display
-    static constexpr int kNumTimeOptions = 4;
-    static constexpr float kBeatFractions[kNumTimeOptions] = {
-        1.0f, 2.0f, 4.0f, 8.0f};
-    static constexpr const char* kBeatLabels[kNumTimeOptions] = {
-        "1", "2", "4", "8"};
+    // Musical time options live in PluginConstants.h (kDisplay*).
+    // kDisplayNumRanges, kDisplayBeatFractions, kDisplayBeatLabels.
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
@@ -58,9 +59,7 @@ class CompressorDisplay : public juce::Component,
     /** Point to the processor's beat-sync buffers (call once from editor constructor). */
     void setBeatSyncBuffers(const BeatSyncBuffer& input,
                             const BeatSyncBuffer& downGr,
-                            const BeatSyncBuffer& upGr,
-                            const BeatSyncBuffer& detector,
-                            const BeatSyncBuffer& downDetector);
+                            const BeatSyncBuffer& upGr);
 
     /** Set current playhead PPQ for cursor position (call from timerCallback). */
     void setCurrentPpq(double ppq) { currentPpq = ppq; }
@@ -73,8 +72,8 @@ class CompressorDisplay : public juce::Component,
     void updateFromFifos(AudioSampleFifo<2>& inputFifo,
                          AudioSampleFifo<2>& downGrFifo,
                          AudioSampleFifo<2>& upGrFifo,
-                         AudioSampleFifo<2>& detectorFifo,
-                         AudioSampleFifo<2>& downDetectorFifo);
+                         RmsPacketFifo& detectorFifo,
+                         RmsPacketFifo& downDetectorFifo);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -125,8 +124,8 @@ class CompressorDisplay : public juce::Component,
     float upRatio = 4.0f;
 
     // --- Musical time buttons ---
-    int selectedTimeIndex = 1; // default: 1 beat
-    std::array<juce::TextButton, kNumTimeOptions> timeButtons;
+    int selectedTimeIndex = 1; // default: 2 beats (kDisplayBeatFractions[1])
+    std::array<juce::TextButton, kDisplayNumRanges> timeButtons;
 
     // --- Curve visibility flags ---
     bool showUpDetectorCurve = true;
@@ -136,13 +135,21 @@ class CompressorDisplay : public juce::Component,
 
     // --- Beat-sync state ---
     bool beatSyncMode = false;
-    const BeatSyncBuffer* inputSyncBuf = nullptr;
-    const BeatSyncBuffer* downGrSyncBuf = nullptr;
-    const BeatSyncBuffer* upGrSyncBuf = nullptr;
-    const BeatSyncBuffer* detectorSyncBuf = nullptr;
-    const BeatSyncBuffer* downDetectorSyncBuf = nullptr;
+    const BeatSyncBuffer* inputSyncBuf    = nullptr;
+    const BeatSyncBuffer* downGrSyncBuf   = nullptr;
+    const BeatSyncBuffer* upGrSyncBuf     = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
+
+    // --- Detector RMS ring buffer + bucket-set display channels ---
+    struct RmsDisplayChannel {
+      std::vector<float>        rmsRing;                            // PPQ-indexed ring of linear power (x^2)
+        int                       rmsRingSize = 0;
+        phu::audio::BucketSet     bucketSet{phu::audio::BucketSet::Kind::Rms};
+      std::vector<float>        paintValues;                        // one RMS dB value per bucket
+    };
+    RmsDisplayChannel m_detDisplay;      // up-detector (raw input level)
+    RmsDisplayChannel m_downDetDisplay;  // down-detector (post-upward-boost level)
 
     // --- Draggable handle state ---
     enum class DragTarget { None, DownThresh, DownRatio, UpThresh, UpRatio };
@@ -172,6 +179,9 @@ class CompressorDisplay : public juce::Component,
     void paintDbGrid(juce::Graphics& g, const juce::Rectangle<int>& area, bool isTransferCurve);
 
     // --- Beat-sync rendering helpers ---
+    void resizeDetDisplayChannel(RmsDisplayChannel& ch, double bpm, double sr, double displayBeats);
+    void insertPacketToChannel(RmsDisplayChannel& ch, const RmsPacket& packet, double displayRangeBeats);
+    void computeDirtyBucketMeans(RmsDisplayChannel& ch);
     void paintBeatSyncWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintBeatSyncDetector(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintBeatSyncGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);

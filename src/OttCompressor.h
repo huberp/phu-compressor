@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CompressorStage.h"
+#include "PluginConstants.h"
 #include "VolumeDetector.h"
 #include <cmath>
 #include <juce_dsp/juce_dsp.h>
@@ -81,6 +82,10 @@ class OttCompressor {
         SampleType output;
         SampleType downGain; // linear gain from downward stage (≤ 1.0)
         SampleType upGain;   // linear gain from upward stage (≥ 1.0)
+        SampleType envRmsUp;
+        SampleType envRmsDown;
+        SampleType envDbUp;  // detectorUp RMS/peak value for this sample
+        SampleType envDbDown; // detectorDown RMS/peak value for this sample
     };
 
     Result processSampleWithGR(int channel, SampleType input) {
@@ -92,7 +97,8 @@ class OttCompressor {
         // decays smoothly — unlike a raw per-sample abs(), which collapses to -inf
         // at every zero crossing and causes the boost envelope to chase carrier-
         // frequency noise, producing audible "wiggle" and display spikes.
-        const SampleType envDbUp = detectorUp.processSample(channel, input);
+        const auto envUp = detectorUp.processSample(channel, input);
+        const SampleType envDbUp = envUp.db;
         const SampleType absInput = std::abs(input);
         fastPeakUp_[channel] = std::max(absInput, fastPeakUp_[channel] * fastPeakDecay_);
         const SampleType levelForUp = std::max(envDbUp, linearToDb(fastPeakUp_[channel]));
@@ -103,11 +109,13 @@ class OttCompressor {
         // Stage 2: downward compression on the upward-boosted signal.
         // Acts as a natural ceiling — tames anything the upward stage pushed up,
         // making the chain self-regulating.
-        const SampleType envDbDown = detectorDown.processSample(channel, intermediate);
+        const auto envDown = detectorDown.processSample(channel, intermediate);
+        const SampleType envDbDown = envDown.db;
         const auto downResult      = downStage.processSample(channel, envDbDown);
         const SampleType downGain  = dbToLinear(downResult.gainDb);
 
-        return { intermediate * downGain, downGain, upGain };
+        return { intermediate * downGain, downGain, upGain,
+                 envUp.rms, envDown.rms, envDbUp, envDbDown };
     }
 
     // ── UI accessors ─────────────────────────────────────────────────────
@@ -126,6 +134,11 @@ class OttCompressor {
         return detectorDown.getCurrentLevelDb(channel);
     }
 
+    SampleType   getUpDetectorWindowMs()   const { return detectorUp.getWindowMs();   }
+    SampleType   getDownDetectorWindowMs() const { return detectorDown.getWindowMs(); }
+    DetectorMode getUpDetectorMode()       const { return detectorUp.getMode();       }
+    DetectorMode getDownDetectorMode()     const { return detectorDown.getMode();     }
+
   private:
     static SampleType dbToLinear(SampleType dB) {
         constexpr SampleType kLog10Over20 = SampleType(0.11512925464970228);
@@ -140,8 +153,8 @@ class OttCompressor {
 
     static constexpr int kMaxChannels = 2;
 
-    VolumeDetector<SampleType>  detectorDown;
-    VolumeDetector<SampleType>  detectorUp;
+    VolumeDetector<SampleType>  detectorDown { SampleType(kDetectorMaxWindowMs) };
+    VolumeDetector<SampleType>  detectorUp   { SampleType(kDetectorMaxWindowMs) };
     CompressorStage<SampleType> downStage;
     CompressorStage<SampleType> upStage;
 

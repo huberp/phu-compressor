@@ -88,7 +88,12 @@ class CompressorStage {
             const SampleType excess = std::max(envDb - threshDb, SampleType(0));
             targetGainDb = -excess * (SampleType(1) - SampleType(1) / ratio); // ≤ 0
         } else {
-            const SampleType deficit = std::max(threshDb - envDb, SampleType(0));
+            // Clamp env to the noise floor before computing deficit.
+            // Below kUpwardFloorDb the signal is effectively noise — boosting it
+            // further would amplify the noise floor rather than musical content,
+            // and would cause the max boost to become independent of threshold.
+            const SampleType clampedEnv = std::max(envDb, kUpwardFloorDb);
+            const SampleType deficit = std::max(threshDb - clampedEnv, SampleType(0));
             targetGainDb = deficit * (SampleType(1) - SampleType(1) / ratio); // ≥ 0
         }
 
@@ -119,6 +124,13 @@ class CompressorStage {
         attackCoeff  = msToCoeff(attackMs);
         releaseCoeff = msToCoeff(releaseMs);
     }
+
+    // ── Constants ────────────────────────────────────────────────────────
+
+    // Noise floor for the upward stage: signals below this are treated as silence.
+    // Prevents boosting quantization/circuit noise and keeps max boost proportional
+    // to threshold, making the display and audio behaviour predictable.
+    static constexpr SampleType kUpwardFloorDb = SampleType(-80);
 
     // ── State ────────────────────────────────────────────────────────────
 

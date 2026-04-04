@@ -36,23 +36,22 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_inputFifo.reset();
     m_gainReductionFifo.reset();
     m_upGrFifo.reset();
-    m_detectorFifo.reset();
-    m_downDetectorFifo.reset();
+    m_detectorPacketFifo.reset();
+    m_downDetectorPacketFifo.reset();
+    m_accumCount      = 0;
+    m_accumBlockCount = 0;
+    m_accumStartPpq   = 0.0;
 
     // Pre-allocate temp buffers with headroom — never reallocate on the audio thread
     const int bufSize = juce::jmax(samplesPerBlock, 8192);
     m_grBuffer.setSize(2, bufSize);
     m_upGrBuffer.setSize(2, bufSize);
-    m_detectorBuffer.setSize(2, bufSize);
-    m_downDetectorBuffer.setSize(2, bufSize);
     m_syncGlobals.updateSampleRate(sampleRate);
 
     // Beat-sync buffers: 4096 bins for position-indexed display
     m_inputSyncBuf.prepare(4096);
     m_grSyncBuf.prepare(4096);
     m_upGrSyncBuf.prepare(4096);
-    m_detectorSyncBuf.prepare(4096);
-    m_downDetectorSyncBuf.prepare(4096);
 }
 
 void PhuCompressorAudioProcessor::releaseResources() {
@@ -85,12 +84,13 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // RMS mode: check BPM sync
         const bool rmsSynced = rmsSyncModePtr->load() >= 0.5f;
         if (rmsSynced && m_syncGlobals.getBPM() > 0.0) {
-            const int beatIdx = juce::jlimit(0, kNumBeatDivisions - 1,
+            const int beatIdx = juce::jlimit(0, kDetectorNumDivisions - 1,
                                              static_cast<int>(rmsBeatDivPtr->load()));
-            const float beatFrac = kBeatFractions[beatIdx];
+            const float beatFrac = kDetectorBeatFractions[beatIdx];
             const float windowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
-            compressor.setDetectorWindowMs(juce::jlimit(1.0f, 500.0f, windowMs));
+            // No upper clamp — VolumeDetector buffer supports up to kDetectorMaxWindowMs ms.
+            compressor.setDetectorWindowMs(std::max(1.0f, windowMs));
         } else {
             compressor.setDetectorWindowMs(rmsWindowMsPtr->load());
         }
@@ -103,25 +103,57 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Temp buffers pre-allocated in prepareToPlay — no runtime allocation
     jassert(m_grBuffer.getNumSamples() >= numSamples);
-    jassert(m_detectorBuffer.getNumSamples() >= numSamples);
-    jassert(m_downDetectorBuffer.getNumSamples() >= numSamples);
 
-    // Process with gain reduction + detector level tracking
-    for (int ch = 0; ch < numChannels && ch < 2; ++ch) {
-        float* channelData    = buffer.getWritePointer(ch);
-        float* grData         = m_grBuffer.getWritePointer(ch);
-        float* upGrData       = m_upGrBuffer.getWritePointer(ch);
-        float* detData        = m_detectorBuffer.getWritePointer(ch);
-        float* downDetData    = m_downDetectorBuffer.getWritePointer(ch);
-        for (int i = 0; i < numSamples; ++i) {
-            auto [output, downGain, upGain] = compressor.processSampleWithGR(ch, channelData[i]);
-            channelData[i] = output;
-            grData[i]      = downGain;  // linear, ≤ 1.0
-            upGrData[i]    = upGain;    // linear, ≥ 1.0
-            detData[i]     = compressor.getDetectorLevelDb(ch);      // raw input level
-            downDetData[i] = compressor.getDownDetectorLevelDb(ch);  // post-upward-boost level
+    auto flushDetectorPackets = [&]() {
+        if (m_accumCount <= 0)
+            return;
+        m_detectorPacketFifo.push(m_accumStartPpq, m_detAccumBuf.data(), m_accumCount);
+        m_downDetectorPacketFifo.push(m_accumStartPpq, m_downDetAccumBuf.data(), m_accumCount);
+        m_accumCount = 0;
+        m_accumBlockCount = 0;
+    };
+
+    if (m_accumCount == 0)
+        m_accumStartPpq = m_syncGlobals.getPpqBlockStart();
+
+    if (m_accumCount + numSamples > phu::audio::kRmsMaxPacketSamples)
+        flushDetectorPackets();
+
+    if (m_accumCount == 0)
+        m_accumStartPpq = m_syncGlobals.getPpqBlockStart();
+
+    // Process per sample so the returned detector RMS values can be batched directly for UI transport.
+    for (int i = 0; i < numSamples; ++i) {
+        float detRmsSum = 0.0f;
+        float downDetRmsSum = 0.0f;
+        int activeChannels = 0;
+
+        for (int ch = 0; ch < numChannels && ch < 2; ++ch) {
+            float* channelData = buffer.getWritePointer(ch);
+            float* grData      = m_grBuffer.getWritePointer(ch);
+            float* upGrData    = m_upGrBuffer.getWritePointer(ch);
+
+            const auto result = compressor.processSampleWithGR(ch, channelData[i]);
+            channelData[i] = result.output;
+            grData[i]      = result.downGain;
+            upGrData[i]    = result.upGain;
+            detRmsSum += result.envRmsUp;
+            downDetRmsSum += result.envRmsDown;
+            ++activeChannels;
+        }
+
+        if (activeChannels > 0) {
+            const float invCh = 1.0f / static_cast<float>(activeChannels);
+            m_detAccumBuf[static_cast<size_t>(m_accumCount + i)] = detRmsSum * invCh;
+            m_downDetAccumBuf[static_cast<size_t>(m_accumCount + i)] = downDetRmsSum * invCh;
         }
     }
+
+    m_accumCount += numSamples;
+    ++m_accumBlockCount;
+
+    if (m_accumBlockCount >= kRmsAccumBlocks)
+        flushDetectorPackets();
 
     // Push post-compression output to FIFO (for UI waveform display)
     const float* outputPtrs[2] = {buffer.getReadPointer(0),
@@ -140,18 +172,6 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                  numChannels > 1 ? m_upGrBuffer.getReadPointer(1)
                                                  : m_upGrBuffer.getReadPointer(0)};
     m_upGrFifo.push(upGrPtrs, numSamples);
-
-    // Push detector level values to FIFO (up-detector = raw input level)
-    const float* detPtrs[2] = {m_detectorBuffer.getReadPointer(0),
-                                numChannels > 1 ? m_detectorBuffer.getReadPointer(1)
-                                                : m_detectorBuffer.getReadPointer(0)};
-    m_detectorFifo.push(detPtrs, numSamples);
-
-    // Push down-detector level values to FIFO (post-upward-boost level)
-    const float* downDetPtrs[2] = {m_downDetectorBuffer.getReadPointer(0),
-                                    numChannels > 1 ? m_downDetectorBuffer.getReadPointer(1)
-                                                    : m_downDetectorBuffer.getReadPointer(0)};
-    m_downDetectorFifo.push(downDetPtrs, numSamples);
 
     // Beat-sync buffer writes: per-sample PPQ → normalised position → bin
     {
@@ -179,15 +199,9 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 const float upLin  = std::max(upGrPtrs[0][i], upGrPtrs[1][i]);
                 const float upDb   = (upLin > 1e-10f) ? 20.0f * std::log10(upLin) : 0.0f;
 
-                // Detector: stereo → mono (already in dB)
-                const float detDb = (detPtrs[0][i] + detPtrs[1][i]) * 0.5f;
-                const float downDetDb = (downDetPtrs[0][i] + downDetPtrs[1][i]) * 0.5f;
-
                 m_inputSyncBuf.write(normPos, inDb);
                 m_grSyncBuf.write(normPos, grDb);
                 m_upGrSyncBuf.write(normPos, upDb);
-                m_detectorSyncBuf.write(normPos, detDb);
-                m_downDetectorSyncBuf.write(normPos, downDetDb);
             }
             m_syncGlobals.setPpqEndOfBlock(blockPpq + numSamples * ppqPerSample);
         }
@@ -314,10 +328,11 @@ PhuCompressorAudioProcessor::createParameterLayout() {
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{kParamRmsSyncMode, 1}, "RMS Sync", false));
 
-    // RMS beat division: 0 = 1/8, 1 = 1/4, 2 = 1/2, 3 = 1, 4 = 2, 5 = 4
+    // RMS beat division: 0=1/32, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1, 6=2, 7=4
+    // Must stay consistent with: rmsBeatDivCombo item order and kDetectorBeatLabels[] in PluginConstants.h
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{kParamRmsBeatDiv, 1}, "RMS Beat Div",
-        juce::StringArray{"1/8", "1/4", "1/2", "1", "2", "4"}, 1));
+        juce::StringArray{"1/32", "1/16", "1/8", "1/4", "1/2", "1", "2", "4"}, 0));
 
     // Peak window length: 1 ms to 50 ms, default 50 ms
     layout.add(std::make_unique<juce::AudioParameterFloat>(
