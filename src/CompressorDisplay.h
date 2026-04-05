@@ -145,7 +145,7 @@ class CompressorDisplay : public juce::Component,
     struct RmsDisplayChannel {
       std::vector<float>        rmsRing;                            // PPQ-indexed ring of linear power (x^2)
         int                       rmsRingSize = 0;
-        phu::audio::BucketSet     bucketSet{phu::audio::BucketSet::Kind::Rms};
+        phu::audio::BucketSet     bucketSet;
       std::vector<float>        paintValues;                        // one RMS dB value per bucket
     };
     RmsDisplayChannel m_detDisplay;      // up-detector (raw input level)
