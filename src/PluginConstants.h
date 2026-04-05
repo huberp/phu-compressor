@@ -78,6 +78,12 @@ static constexpr double kDetectorMaxBeatFraction =
 static constexpr double kDetectorMaxWindowMs =
     (kDetectorMaxBeatFraction / kMinBPM) * 60000.0;                // = 6000.0 ms
 
+// ── Derived: maximum display range ───────────────────────────────────────────
+
+/// Largest display beat fraction — used to pre-allocate the detector RMS ring buffer.
+static constexpr double kDisplayMaxBeatFraction =
+    static_cast<double>(kDisplayBeatFractions[kDisplayNumRanges - 1]);  // = 8.0
+
 // ── Display RMS ring buffer capacity ─────────────────────────────────────────
 // Worst case: 8 beats / 40 BPM × 60 s × 192000 Hz = 2,304,000 samples.
 // The detector RMS ring buffer is sized to this maximum so it can hold exactly

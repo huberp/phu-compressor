@@ -149,6 +149,16 @@ class PpqRingBuffer {
         return changed;
     }
 
+    /**
+     * Zero all samples in the current working range.
+     *
+     * Call after setWorkingSize() to discard stale data from a previous configuration.
+     */
+    void clear() {
+        if (m_workingSize > 0)
+            std::fill(m_buffer.begin(), m_buffer.begin() + m_workingSize, T{});
+    }
+
     // -------------------------------------------------------------------------
     // Insert
     // -------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 #include "audio/AudioSampleFifo.h"
 #include "audio/BeatSyncBuffer.h"
 #include "audio/BucketSet.h"
+#include "audio/PpqRingBuffer.h"
 #include "audio/RmsPacketFifo.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -108,6 +109,7 @@ class CompressorDisplay : public juce::Component,
     // Temp pull buffers
     std::array<float, kMaxPullSamples> tempL{};
     std::array<float, kMaxPullSamples> tempR{};
+    std::array<float, phu::audio::kRmsMaxPacketSamples> m_rmsSquaredTemp{};
 
     // Paint read-out buffers
     std::array<float, kRingSize> paintBufInput{};
@@ -143,10 +145,12 @@ class CompressorDisplay : public juce::Component,
 
     // --- Detector RMS ring buffer + bucket-set display channels ---
     struct RmsDisplayChannel {
-      std::vector<float>        rmsRing;                            // PPQ-indexed ring of linear power (x^2)
-        int                       rmsRingSize = 0;
-        phu::audio::BucketSet     bucketSet;
-      std::vector<float>        paintValues;                        // one RMS dB value per bucket
+        RmsDisplayChannel()
+            : rmsRing(kMinBPM, kMaxSampleRate, kDisplayMaxBeatFraction)
+        {}
+        phu::audio::PpqRingBufferF rmsRing;    // PPQ-indexed ring of linear power (x^2)
+        phu::audio::BucketSet      bucketSet;
+        std::vector<float>         paintValues; // one RMS dB value per bucket
     };
     RmsDisplayChannel m_detDisplay;      // up-detector (raw input level)
     RmsDisplayChannel m_downDetDisplay;  // down-detector (post-upward-boost level)
@@ -180,7 +184,7 @@ class CompressorDisplay : public juce::Component,
 
     // --- Beat-sync rendering helpers ---
     void resizeDetDisplayChannel(RmsDisplayChannel& ch, double bpm, double sr, double displayBeats);
-    void insertPacketToChannel(RmsDisplayChannel& ch, const RmsPacket& packet, double displayRangeBeats);
+    void insertPacketToChannel(RmsDisplayChannel& ch, const RmsPacket& packet);
     void computeDirtyBucketMeans(RmsDisplayChannel& ch);
     void paintBeatSyncWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintBeatSyncDetector(juce::Graphics& g, const juce::Rectangle<int>& area);
