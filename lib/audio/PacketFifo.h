@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <juce_core/juce_core.h>
 
 namespace phu {
@@ -16,6 +18,18 @@ struct TimedBufferPacket {
     double  startPpq       = 0.0;
     int     count          = 0;
     SampleT data[MaxCount] = {};
+
+    /**
+     * Populate the packet from a raw buffer.
+     * @param ppq    PPQ position of the first sample.
+     * @param src    Pointer to source sample data.
+     * @param n      Number of samples to copy (clamped to MaxCount).
+     */
+    void set(double ppq, const SampleT* src, int n) {
+        startPpq = ppq;
+        count    = std::min(n, MaxCount);
+        std::memcpy(data, src, static_cast<size_t>(count) * sizeof(SampleT));
+    }
 };
 
 /**

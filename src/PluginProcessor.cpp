@@ -1,7 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
-#include <cstring>
 
 PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
     : AudioProcessor(BusesProperties()
@@ -108,16 +107,11 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     auto flushDetectorPackets = [&]() {
         if (m_accumCount <= 0)
             return;
-        const int count = juce::jmin(m_accumCount, phu::audio::kRmsMaxPacketSamples);
         RmsPacket detPacket;
-        detPacket.startPpq = m_accumStartPpq;
-        detPacket.count = count;
-        std::memcpy(detPacket.data, m_detAccumBuf.data(), static_cast<size_t>(count) * sizeof(float));
+        detPacket.set(m_accumStartPpq, m_detAccumBuf.data(), m_accumCount);
         m_detectorPacketFifo.push(detPacket);
         RmsPacket downDetPacket;
-        downDetPacket.startPpq = m_accumStartPpq;
-        downDetPacket.count = count;
-        std::memcpy(downDetPacket.data, m_downDetAccumBuf.data(), static_cast<size_t>(count) * sizeof(float));
+        downDetPacket.set(m_accumStartPpq, m_downDetAccumBuf.data(), m_accumCount);
         m_downDetectorPacketFifo.push(downDetPacket);
         m_accumCount = 0;
         m_accumBlockCount = 0;
