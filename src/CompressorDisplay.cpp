@@ -28,6 +28,10 @@ static const juce::Colour kUpRatioHandleColour{0xFF88FF88u};    // Light green
 static constexpr float kHandleRadius = 6.0f;
 static constexpr float kHandleHitRadius = 10.0f;
 
+// Maximum number of display buckets for the detector RMS ring channel.
+// Matches the former BucketSet::kMaxRmsBuckets constant.
+static constexpr int kDetRmsBuckets = 512;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Construction / Destruction
 // ─────────────────────────────────────────────────────────────────────────
@@ -853,7 +857,7 @@ void CompressorDisplay::resizeDetDisplayChannel(RmsDisplayChannel& ch,
 
     ch.rmsRingSize = newSize;
     ch.rmsRing.assign(static_cast<size_t>(newSize), 0.0f);
-    ch.bucketSet.recompute(bpm, sr, displayBeats, newSize);
+    ch.bucketSet.initializeBySize(newSize, kDetRmsBuckets);
     ch.paintValues.assign(static_cast<size_t>(ch.bucketSet.bucketCount()), kMinDb);
 }
 

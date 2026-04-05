@@ -1,7 +1,7 @@
 #pragma once
 
 #include <algorithm>
-#include <cmath>
+#include <functional>
 #include <iterator>
 #include <vector>
 
@@ -9,75 +9,116 @@ namespace phu {
 namespace audio {
 
 /**
- * Bucket — a half-open index range [startIdx, endIdx) into a RawSampleBuffer,
+ * Bucket — a half-open index range [startIdx, endIdx) into a conceptual buffer [0, N),
  * together with a dirty flag indicating that the cached computation result is stale.
  */
 struct Bucket {
-    int  startIdx = 0;   ///< Inclusive start index into the ring buffer.
-    int  endIdx   = 0;   ///< Exclusive end index into the ring buffer.
+    int  startIdx = 0;    ///< Inclusive start index.
+    int  endIdx   = 0;    ///< Exclusive end index.
     bool dirty    = true; ///< True when the samples in this range have changed.
 };
 
 /**
- * BucketSet — partitions a buffer [0, bufferSize) into contiguous Bucket ranges.
+ * BucketSet — partitions a buffer [0, N) into B contiguous, non-overlapping Bucket ranges.
  *
- * Two kinds are supported, each using a different bucket-size formula:
+ * Partitioning modes:
  *
- *   Kind::Rms     — bucket size = max(1, bufferSize / (displayBeats × 16))
- *                   Intended for per-1/16-beat RMS display.
- *                   Maximum 128 buckets.
+ *   Fixed-count (primary mode)
+ *     A desired bucket count B is specified; boundaries are computed as
+ *     floor(i * N / B) for i in [0, B], which guarantees:
+ *       - All buckets cover [0, N) with no gaps or overlaps.
+ *       - Bucket sizes differ by at most 1 (floor vs ceil of N/B).
+ *       - Last bucket ends exactly at N.
+ *     If B > N it is clamped to N so that every bucket contains at least one index.
+ *     Use initializeBySize(), initializeByVector(), or initializeBySizeFn().
  *
- *   Kind::Cancel  — bucket size = ceil(sampleRate × 0.004)  (~4 ms)
- *                   Intended for the cancellation-index computation.
- *                   Maximum 256 buckets.
+ *   Bound-buffer mode
+ *     BucketSet stores a size provider (std::function<int()>) and a target bucket
+ *     count.  Calling recompute() re-reads the current size and rebuilds buckets.
+ *     Useful when the underlying buffer can change size over time (e.g. ring buffer
+ *     resized when BPM or sample rate changes).
  *
- * Call recompute() after any change to BPM, sample rate, display beats, or buffer size.
- * Call markDirty() each time samples are written to the buffer.
- * Iterate over only dirty buckets via dirtyBegin() / dirtyEnd().
+ * Dirty marking:
+ *   Call markDirtyRange(u1, u2) when ring-buffer positions u1..u2 (inclusive) are
+ *   written.  Handles ring wrap (u1 > u2).
+ *   Iterate over only dirty buckets with dirtyBegin() / dirtyEnd().
+ *
+ * Note for juce::AudioBuffer callers:
+ *   Use initializeBySize(buf.getNumSamples(), bucketCount) — no adapter needed.
  */
 class BucketSet {
   public:
-    /** Selects the bucket-size formula used in recompute(). */
-    enum class Kind { Rms, Cancel };
-
-    static constexpr int kMaxRmsBuckets    = 512;
-    static constexpr int kMaxCancelBuckets = 256;
-
-    explicit BucketSet(Kind kind) : m_kind(kind) {}
+    BucketSet() = default;
 
     // -------------------------------------------------------------------------
-    // Recompute / rebuild
+    // Initialization
     // -------------------------------------------------------------------------
 
     /**
-     * Rebuild all bucket boundaries and mark every bucket dirty.
+     * Partition [0, bufferSize) into bucketCount buckets.
      *
-     * Must be called after BPM, sample rate, display-beats, or buffer size changes.
+     * If bucketCount > bufferSize it is clamped to bufferSize (no empty buckets).
+     * If bufferSize <= 0 the bucket list is cleared.
+     * All buckets are marked dirty after this call.
      *
-     * @param bpm          Current tempo (used indirectly through bufferSize; kept for
-     *                     API symmetry with the data model).
-     * @param sampleRate   Current audio sample rate in Hz (used by Kind::Cancel).
-     * @param displayBeats Musical range covered by the buffer (used by Kind::Rms).
-     * @param bufferSize   Total number of samples in the RawSampleBuffer.
+     * @param bufferSize   Total number of addressable indices in the buffer.
+     * @param bucketCount  Desired number of buckets (e.g. display width in pixels).
      */
-    void recompute(double /*bpm*/, double sampleRate, double displayBeats, int bufferSize) {
-        m_buckets.clear();
+    void initializeBySize(int bufferSize, int bucketCount) {
+        m_sizeFn            = nullptr;
+        m_bufferSize        = bufferSize;
+        m_bucketCountTarget = bucketCount;
+        rebuild(bufferSize, bucketCount);
+    }
 
-        if (bufferSize <= 0) {
-            m_bucketSize = 1;
-            return;
-        }
+    /**
+     * Partition [0, vec.size()) into bucketCount buckets.
+     *
+     * Convenience wrapper for std::vector (or any container with a size() method).
+     */
+    template<typename T>
+    void initializeByVector(const std::vector<T>& vec, int bucketCount) {
+        initializeBySize(static_cast<int>(vec.size()), bucketCount);
+    }
 
-        const int bucketSize = computeBucketSize(sampleRate, displayBeats, bufferSize);
-        m_bucketSize = bucketSize;
-        const int maxBuckets = (m_kind == Kind::Rms) ? kMaxRmsBuckets : kMaxCancelBuckets;
+    /**
+     * Store a size provider and partition immediately using the current size.
+     *
+     * The sizeFn is called once now to build the initial buckets, and again on
+     * every subsequent recompute() call.  This allows bucket boundaries to track
+     * a buffer that is resized over time without the caller passing the size each time.
+     *
+     * Example — ring buffer whose length changes with BPM:
+     *   bucketSet.initializeBySizeFn([&ch](){ return ch.rmsRingSize; }, 512);
+     *   // later, after ring is resized:
+     *   bucketSet.recompute();
+     *
+     * Example — juce::AudioBuffer:
+     *   bucketSet.initializeBySizeFn([&buf](){ return buf.getNumSamples(); }, 256);
+     *
+     * @param sizeFn       Callable returning the current buffer size as int.
+     * @param bucketCount  Desired number of buckets.
+     */
+    void initializeBySizeFn(std::function<int()> sizeFn, int bucketCount) {
+        m_sizeFn            = sizeFn;
+        m_bucketCountTarget = bucketCount;
+        const int sz        = sizeFn ? sizeFn() : 0;
+        m_bufferSize        = sz;
+        rebuild(sz, bucketCount);
+    }
 
-        int start = 0;
-        while (start < bufferSize && static_cast<int>(m_buckets.size()) < maxBuckets) {
-            const int end = std::min(start + bucketSize, bufferSize);
-            m_buckets.push_back({start, end, true});
-            start = end;
-        }
+    /**
+     * Recompute bucket boundaries using the current buffer size.
+     *
+     * If a size provider was registered with initializeBySizeFn(), it is called
+     * to obtain the up-to-date size.  Otherwise the last known buffer size is used.
+     *
+     * Call this after the underlying buffer has been resized.
+     */
+    void recompute() {
+        const int sz = m_sizeFn ? m_sizeFn() : m_bufferSize;
+        m_bufferSize = sz;
+        rebuild(sz, m_bucketCountTarget);
     }
 
     // -------------------------------------------------------------------------
@@ -87,8 +128,7 @@ class BucketSet {
     /**
      * Mark every bucket whose range overlaps [fromIdx, toIdx) as dirty.
      *
-     * Performs a linear scan; O(bucketsInRange) for contiguous write regions.
-     * Prefer markDirtyIndex() for single-sample writes.
+     * Linear scan — O(buckets in range).  Prefer markDirtyIndex() for single writes.
      *
      * @param fromIdx  Inclusive start of the written region.
      * @param toIdx    Exclusive end of the written region.
@@ -101,33 +141,21 @@ class BucketSet {
     }
 
     /**
-     * Mark the single bucket that contains writeIdx as dirty. O(1).
+     * Mark the single bucket containing writeIdx as dirty.  O(1).
      *
-     * Uses integer division (writeIdx / bucketSize) to directly index the bucket.
-     * The last (remainder) bucket is reached by clamping to bucketCount-1, which
-     * is correct because floor(writeIdx / bucketSize) >= bucketCount-1 for any
-     * writeIdx that falls in the remainder range.
-     *
-     * Prefer this over markDirty() for single-sample writes from
-     * RawSampleBuffer::write(), which always produces a one-element range.
-     *
-     * @param writeIdx  The buffer index that was just written (from WriteRange::from).
+     * @param writeIdx  The buffer index that was just written.
      */
     void markDirtyIndex(int writeIdx) {
-        if (m_buckets.empty() || m_bucketSize <= 0) return;
-        int bi = writeIdx / m_bucketSize;
-        if (bi >= static_cast<int>(m_buckets.size()))
-            bi = static_cast<int>(m_buckets.size()) - 1;
-        m_buckets[static_cast<size_t>(bi)].dirty = true;
+        if (m_buckets.empty()) return;
+        m_buckets[static_cast<size_t>(findBucket(writeIdx))].dirty = true;
     }
 
     /**
-     * Mark every bucket touched by a contiguous write from buffer index u1 to
-     * u2 (both inclusive).  Handles the wrap-around case where the write spans
-     * the end of the ring and continues from index 0.
+     * Mark every bucket touched by a contiguous ring-buffer write from u1 to u2
+     * (both inclusive).  Handles the wrap-around case where u1 > u2.
      *
-     * No-wrap  (u1 <= u2): marks buckets  [u1/bl .. u2/bl]
-     * Wrap     (u1 >  u2): marks buckets  [u1/bl .. last]  AND  [0 .. u2/bl]
+     * No-wrap  (u1 <= u2): marks buckets covering [u1 .. u2]
+     * Wrap     (u1 >  u2): marks buckets covering [u1 .. last] AND [0 .. u2]
      *
      * Complexity: O(number of buckets touched) — typically O(1) for a short
      * packet, O(bucketCount) at worst for a full-buffer wrap.
@@ -136,22 +164,20 @@ class BucketSet {
      * @param u2  Buffer index of the last  written sample (inclusive).
      */
     void markDirtyRange(int u1, int u2) {
-        if (m_buckets.empty() || m_bucketSize <= 0) return;
+        if (m_buckets.empty()) return;
         const int last = static_cast<int>(m_buckets.size()) - 1;
-        int i1 = u1 / m_bucketSize;
-        if (i1 > last) i1 = last;
-        int i2 = u2 / m_bucketSize;
-        if (i2 > last) i2 = last;
+        const int i1   = findBucket(u1);
+        const int i2   = findBucket(u2);
 
         if (i1 <= i2) {
-            // Common case: no ring wrap, one contiguous bucket range
+            // Common case: no ring wrap, one contiguous bucket range.
             for (int i = i1; i <= i2; ++i)
                 m_buckets[static_cast<size_t>(i)].dirty = true;
         } else {
-            // Ring wrapped: [i1 .. last] and [0 .. i2]
+            // Ring wrapped: [i1 .. last] and [0 .. i2].
             for (int i = i1; i <= last; ++i)
                 m_buckets[static_cast<size_t>(i)].dirty = true;
-            for (int i = 0;  i <= i2;   ++i)
+            for (int i = 0;  i <= i2;  ++i)
                 m_buckets[static_cast<size_t>(i)].dirty = true;
         }
     }
@@ -212,36 +238,62 @@ class BucketSet {
     /** Total number of buckets (dirty and clean). */
     int bucketCount() const { return static_cast<int>(m_buckets.size()); }
 
-    /** Bounds-checked direct access to a bucket by index. */
+    /** Direct access to a bucket by index. */
     const Bucket& bucket(int i) const { return m_buckets[static_cast<size_t>(i)]; }
     Bucket&       bucket(int i)       { return m_buckets[static_cast<size_t>(i)]; }
 
     /** Read-only access to the full bucket vector. */
     const std::vector<Bucket>& buckets() const { return m_buckets; }
 
-    /** The Kind this BucketSet was constructed with. */
-    Kind kind() const { return m_kind; }
-
-    /** The uniform bucket size (samples per bucket) last computed by recompute(). */
-    int bucketSize() const { return m_bucketSize; }
+    /** The buffer size N used in the last initialization or recompute(). */
+    int bufferSize() const { return m_bufferSize; }
 
   private:
-    int computeBucketSize(double sampleRate, double displayBeats, int bufferSize) const {
-        if (m_kind == Kind::Rms) {
-            if (displayBeats <= 0.0) return 1;
-            const int sz = static_cast<int>(static_cast<double>(bufferSize)
-                                            / kMaxRmsBuckets);
-            return std::max(1, sz);
-        } else {
-            // Kind::Cancel: ~4 ms per bucket
-            const int sz = static_cast<int>(std::ceil(sampleRate * 0.004));
-            return std::max(1, sz);
+    /**
+     * Rebuild bucket boundaries using floor(i * N / B) for i in [0, B].
+     *
+     * Guarantees:
+     *   - bucket(0).startIdx == 0
+     *   - bucket(B-1).endIdx == N
+     *   - contiguous: bucket(i).endIdx == bucket(i+1).startIdx
+     *   - non-empty: startIdx < endIdx  (enforced by clamping B to N)
+     */
+    void rebuild(int N, int B) {
+        m_buckets.clear();
+        if (N <= 0 || B <= 0)
+            return;
+
+        // Clamp so every bucket holds at least one index.
+        const int count = std::min(B, N);
+        m_buckets.reserve(static_cast<size_t>(count));
+
+        for (int i = 0; i < count; ++i) {
+            const int start = static_cast<int>(static_cast<double>(i)     * N / count);
+            const int end   = static_cast<int>(static_cast<double>(i + 1) * N / count);
+            m_buckets.push_back({start, end, true});
         }
     }
 
-    Kind                m_kind;
-    int                 m_bucketSize = 1;
-    std::vector<Bucket> m_buckets;
+    /**
+     * Return the index of the bucket containing buffer position idx.  O(1).
+     *
+     * Uses the inverse of the floor(i * N / B) boundary formula:
+     *   bucket(i) covers [floor(i*N/B), floor((i+1)*N/B))
+     *   => bucket containing idx = floor(idx * B / N), clamped to [0, B-1].
+     */
+    int findBucket(int idx) const {
+        if (m_bufferSize <= 0 || m_buckets.empty()) return 0;
+        const int B = static_cast<int>(m_buckets.size());
+        int bi = static_cast<int>(static_cast<double>(idx) * B / m_bufferSize);
+        if (bi < 0)  bi = 0;
+        if (bi >= B) bi = B - 1;
+        return bi;
+    }
+
+    std::function<int()> m_sizeFn;
+    int                  m_bufferSize        = 0;
+    int                  m_bucketCountTarget = 0;
+    std::vector<Bucket>  m_buckets;
 };
 
 } // namespace audio
