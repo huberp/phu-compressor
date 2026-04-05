@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PpqRingBuffer.h"
 #include <algorithm>
 #include <functional>
 #include <iterator>
@@ -180,6 +181,22 @@ class BucketSet {
             for (int i = 0;  i <= i2;  ++i)
                 m_buckets[static_cast<size_t>(i)].dirty = true;
         }
+    }
+
+    /**
+     * Mark every bucket touched by a PpqRingBuffer WriteResult as dirty.
+     *
+     * Forwards each valid range in the result to markDirty().
+     * A no-op when result.ok is false or all ranges are empty.
+     *
+     * @param result  WriteResult returned by PpqRingBuffer::insert().
+     */
+    void setDirty(const WriteResult& result) {
+        if (!result.ok) return;
+        if (result.range1.valid())
+            markDirty(result.range1.start, result.range1.end);
+        if (result.range2.valid())
+            markDirty(result.range2.start, result.range2.end);
     }
 
     // -------------------------------------------------------------------------
