@@ -257,8 +257,8 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
     {
         RmsPacket packet;
         while (detectorFifo.pull(packet)) {
-            if (beatSyncMode && m_detDisplay.rmsRingSize > 0)
-                insertPacketToChannel(m_detDisplay, packet, displayRangeBeats);
+            if (beatSyncMode && m_detDisplay.rmsRing.workingSize() > 0)
+                insertPacketToChannel(m_detDisplay, packet);
             else {
                 for (int i = 0; i < packet.count; ++i) {
                     const float rms = packet.data[static_cast<size_t>(i)];
@@ -275,8 +275,8 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
     {
         RmsPacket packet;
         while (downDetectorFifo.pull(packet)) {
-            if (beatSyncMode && m_downDetDisplay.rmsRingSize > 0)
-                insertPacketToChannel(m_downDetDisplay, packet, displayRangeBeats);
+            if (beatSyncMode && m_downDetDisplay.rmsRing.workingSize() > 0)
+                insertPacketToChannel(m_downDetDisplay, packet);
             else {
                 for (int i = 0; i < packet.count; ++i) {
                     const float rms = packet.data[static_cast<size_t>(i)];
@@ -848,52 +848,36 @@ void CompressorDisplay::resizeDetDisplayChannel(RmsDisplayChannel& ch,
     if (bpm <= 0.0 || sr <= 0.0 || displayBeats <= 0.0)
         return;
 
-    const int newSize = juce::jlimit(
-        1, kDetRmsRingMaxSize,
-        static_cast<int>(std::ceil(displayBeats / bpm * 60.0 * sr)));
-
-    if (newSize == ch.rmsRingSize)
+    if (!ch.rmsRing.setWorkingSize(bpm, sr, displayBeats))
         return;
 
-    ch.rmsRingSize = newSize;
-    ch.rmsRing.assign(static_cast<size_t>(newSize), 0.0f);
-    ch.bucketSet.initializeBySize(newSize, kDetRmsBuckets);
+    ch.rmsRing.clear();
+    ch.bucketSet.initializeBySize(ch.rmsRing.workingSize(), kDetRmsBuckets);
     ch.paintValues.assign(static_cast<size_t>(ch.bucketSet.bucketCount()), kMinDb);
 }
 
 void CompressorDisplay::insertPacketToChannel(RmsDisplayChannel& ch,
-                                               const RmsPacket& packet,
-                                               double displayRangeBeatsArg) {
-    if (ch.rmsRingSize <= 0 || displayRangeBeatsArg <= 0.0)
+                                               const RmsPacket& packet) {
+    if (ch.rmsRing.workingSize() <= 0)
         return;
 
-    double ppqMod = std::fmod(packet.startPpq, displayRangeBeatsArg);
-    if (ppqMod < 0.0) ppqMod += displayRangeBeatsArg;
-    int startIdx = static_cast<int>(ppqMod / displayRangeBeatsArg
-                                    * static_cast<double>(ch.rmsRingSize));
-    startIdx = startIdx % ch.rmsRingSize;  // guard against floating-point overshoot
-
-    const int count = juce::jmin(packet.count, ch.rmsRingSize);
+    const int count = juce::jmin(packet.count, ch.rmsRing.workingSize());
     if (count <= 0) return;
 
-    const int u1 = startIdx;
-    const int u2 = (startIdx + count - 1) % ch.rmsRingSize;
+    // Square the linear RMS values before inserting into the ring (ring stores power: rms²).
+    juce::FloatVectorOperations::multiply(m_rmsSquaredTemp.data(),
+                                          packet.data, packet.data, count);
 
-    // Store squared RMS values in the beat ring.
-    // New arrivals overwrite old cells at the same beat position (discard old, keep newest cycle).
-    for (int i = 0; i < count; ++i) {
-        const int dst = (startIdx + i) % ch.rmsRingSize;
-        const float rms = packet.data[static_cast<size_t>(i)];
-        ch.rmsRing[static_cast<size_t>(dst)] = rms * rms;
-    }
-
-    ch.bucketSet.markDirtyRange(u1, u2);
+    const phu::audio::WriteResult result =
+        ch.rmsRing.insert(packet.startPpq, m_rmsSquaredTemp.data(), count);
+    ch.bucketSet.setDirty(result);
 }
 
 void CompressorDisplay::computeDirtyBucketMeans(RmsDisplayChannel& ch) {
-    if (ch.rmsRingSize <= 0 || ch.paintValues.empty())
+    if (ch.rmsRing.workingSize() <= 0 || ch.paintValues.empty())
         return;
 
+    const float* ringData = ch.rmsRing.data();
     const int bucketCount = ch.bucketSet.bucketCount();
     for (int bi = 0; bi < bucketCount; ++bi) {
         auto& b = ch.bucketSet.bucket(bi);
@@ -907,7 +891,7 @@ void CompressorDisplay::computeDirtyBucketMeans(RmsDisplayChannel& ch) {
         }
         float sumSquares = 0.0f;
         for (int i = b.startIdx; i < b.endIdx; ++i)
-            sumSquares += ch.rmsRing[static_cast<size_t>(i)];
+            sumSquares += ringData[static_cast<size_t>(i)];
 
         const float meanSquares = juce::jmax(1.0e-20f, sumSquares / static_cast<float>(n));
         const float rmsLinear = std::sqrt(meanSquares);
