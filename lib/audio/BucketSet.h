@@ -250,6 +250,14 @@ class BucketSet {
 
   private:
     /**
+     * Integer multiply-divide without overflow: returns (a * b) / c using long long.
+     * Used by rebuild() and findBucket() for exact, overflow-safe boundary arithmetic.
+     */
+    static int mulDiv(int a, int b, int c) {
+        return static_cast<int>(static_cast<long long>(a) * b / c);
+    }
+
+    /**
      * Rebuild bucket boundaries using integer division (i * N) / B for i in [0, B].
      *
      * Uses long long arithmetic to avoid overflow when N and B are large.
@@ -269,8 +277,8 @@ class BucketSet {
         m_buckets.reserve(static_cast<size_t>(count));
 
         for (int i = 0; i < count; ++i) {
-            const int start = static_cast<int>(static_cast<long long>(i)     * N / count);
-            const int end   = static_cast<int>(static_cast<long long>(i + 1) * N / count);
+            const int start = mulDiv(i,     N, count);
+            const int end   = mulDiv(i + 1, N, count);
             m_buckets.push_back({start, end, true});
         }
     }
@@ -286,7 +294,7 @@ class BucketSet {
     int findBucket(int idx) const {
         if (m_bufferSize <= 0 || m_buckets.empty()) return 0;
         const int B = static_cast<int>(m_buckets.size());
-        int bi = static_cast<int>(static_cast<long long>(idx) * B / m_bufferSize);
+        int bi = mulDiv(idx, B, m_bufferSize);
         if (bi < 0)  bi = 0;
         if (bi >= B) bi = B - 1;
         return bi;
