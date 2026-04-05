@@ -107,8 +107,12 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     auto flushDetectorPackets = [&]() {
         if (m_accumCount <= 0)
             return;
-        m_detectorPacketFifo.push(m_accumStartPpq, m_detAccumBuf.data(), m_accumCount);
-        m_downDetectorPacketFifo.push(m_accumStartPpq, m_downDetAccumBuf.data(), m_accumCount);
+        RmsPacket detPacket;
+        detPacket.set(m_accumStartPpq, m_detAccumBuf.data(), m_accumCount);
+        m_detectorPacketFifo.push(detPacket);
+        RmsPacket downDetPacket;
+        downDetPacket.set(m_accumStartPpq, m_downDetAccumBuf.data(), m_accumCount);
+        m_downDetectorPacketFifo.push(downDetPacket);
         m_accumCount = 0;
         m_accumBlockCount = 0;
     };
