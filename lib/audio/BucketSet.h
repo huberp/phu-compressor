@@ -25,9 +25,9 @@ struct Bucket {
  *
  *   Fixed-count (primary mode)
  *     A desired bucket count B is specified; boundaries are computed as
- *     floor(i * N / B) for i in [0, B], which guarantees:
+ *     (i * N) / B for i in [0, B], which guarantees:
  *       - All buckets cover [0, N) with no gaps or overlaps.
- *       - Bucket sizes differ by at most 1 (floor vs ceil of N/B).
+ *       - Bucket sizes differ by at most 1 (integer division of N / B).
  *       - Last bucket ends exactly at N.
  *     If B > N it is clamped to N so that every bucket contains at least one index.
  *     Use initializeBySize(), initializeByVector(), or initializeBySizeFn().
@@ -250,8 +250,9 @@ class BucketSet {
 
   private:
     /**
-     * Rebuild bucket boundaries using floor(i * N / B) for i in [0, B].
+     * Rebuild bucket boundaries using integer division (i * N) / B for i in [0, B].
      *
+     * Uses long long arithmetic to avoid overflow when N and B are large.
      * Guarantees:
      *   - bucket(0).startIdx == 0
      *   - bucket(B-1).endIdx == N
@@ -268,8 +269,8 @@ class BucketSet {
         m_buckets.reserve(static_cast<size_t>(count));
 
         for (int i = 0; i < count; ++i) {
-            const int start = static_cast<int>(static_cast<double>(i)     * N / count);
-            const int end   = static_cast<int>(static_cast<double>(i + 1) * N / count);
+            const int start = static_cast<int>(static_cast<long long>(i)     * N / count);
+            const int end   = static_cast<int>(static_cast<long long>(i + 1) * N / count);
             m_buckets.push_back({start, end, true});
         }
     }
@@ -277,14 +278,15 @@ class BucketSet {
     /**
      * Return the index of the bucket containing buffer position idx.  O(1).
      *
-     * Uses the inverse of the floor(i * N / B) boundary formula:
-     *   bucket(i) covers [floor(i*N/B), floor((i+1)*N/B))
-     *   => bucket containing idx = floor(idx * B / N), clamped to [0, B-1].
+     * Uses the inverse of the (i * N) / B boundary formula:
+     *   bucket(i) covers [(i*N)/B, ((i+1)*N)/B)
+     *   => bucket containing idx = (idx * B) / N, clamped to [0, B-1].
+     * Long long arithmetic prevents overflow for large N and B.
      */
     int findBucket(int idx) const {
         if (m_bufferSize <= 0 || m_buckets.empty()) return 0;
         const int B = static_cast<int>(m_buckets.size());
-        int bi = static_cast<int>(static_cast<double>(idx) * B / m_bufferSize);
+        int bi = static_cast<int>(static_cast<long long>(idx) * B / m_bufferSize);
         if (bi < 0)  bi = 0;
         if (bi >= B) bi = B - 1;
         return bi;
