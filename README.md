@@ -1,257 +1,250 @@
-# PHU COMPRESSOR
+# PHU Compressor
 
 [![Build](https://github.com/huberp/phu-compressor/actions/workflows/build.yml/badge.svg)](https://github.com/huberp/phu-compressor/actions/workflows/build.yml)
+[![Release](https://github.com/huberp/phu-compressor/actions/workflows/release.yml/badge.svg)](https://github.com/huberp/phu-compressor/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![VST3](https://img.shields.io/badge/format-VST3-blue)](https://steinbergmedia.github.io/vst3_doc/)
-[![JUCE](https://img.shields.io/badge/built%20with-JUCE-orange)](https://juce.com/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](#building)
+[![Format](https://img.shields.io/badge/format-VST3-purple.svg)](#building)
+[![JUCE](https://img.shields.io/badge/JUCE-8.0.12-orange.svg)](https://juce.com)
+[![Coffee](https://img.shields.io/badge/By%20me%20a%20Coffee-purple.svg)](https://ko-fi.com/phuplugins)
 
-A free, open-source **OTT-style dual-band compressor** VST3 plugin built with JUCE.  
-Combines classic **downward compression** (tame loud signals) with **upward compression**
-(lift quiet signals) in a single, lightweight processor — perfect for glue compression,
-mastering levelling, or parallel pumping effects.
+A VST3 single-band OTT-style compressor combining upward and downward compression in a single plugin. An interactive transfer curve and a beat-synced rolling waveform display show both gain stages and their detector levels simultaneously, making it easy to see exactly what is happening to the dynamic range.
+
+![PHU Compressor](docs/image-phu-compressor.png)
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Features](#features)
-- [Parameters](#parameters)
-- [Installation](#installation)
-  - [Pre-built Binaries](#pre-built-binaries)
-  - [Supported Platforms](#supported-platforms)
-- [Building from Source](#building-from-source)
-  - [Windows](#windows)
-  - [Linux](#linux)
-  - [CMake Presets](#cmake-presets)
-- [Project Structure](#project-structure)
+- [Highlights](#highlights)
+- [User Guide](#user-guide)
+- [Building](#building)
+- [Architecture](#architecture)
 - [Contributing](#contributing)
 - [License](#license)
-- [Acknowledgements](#acknowledgements)
 
 ---
 
-## Features
+## Highlights
 
-- **Dual-mode compression** — independent downward *and* upward compressor in one plugin
-- **OTT-style gain computation** — ratio-based power-law mapping with smooth ballistic envelopes
-- **Per-channel stereo processing** — left and right channels processed independently
-- **Zero-latency** — no look-ahead; tail length is zero
-- **Preset state save/restore** — full DAW automation and session recall via APVTS
-- **Lightweight** — no web browser, no CURL, no unnecessary JUCE modules
-- **FOSS** — MIT licensed; source included, forks welcome
+🔼🔽 **Upward + downward compression in the classic OTT order** — the upward stage lifts quiet parts first; the downward stage then acts as a natural ceiling on the result. This makes the chain self-regulating: the downward compressor never over-clamps content that was already quiet, and the upward boost never pushes content above the downward threshold.
 
----
+📐 **Interactive transfer curve** — large coloured handles on the transfer curve are draggable directly in the display. Moving a handle updates the corresponding threshold parameter in real-time. The combined (upward + downward) gain curve is drawn as a single continuous line so the interaction between both stages is always visible at a glance.
 
-## Parameters
+📊 **Beat-synced waveform display** — the right half of the panel renders input level, downward gain reduction, and upward boost as overlaid curves. In *Beat Sync* mode the display is anchored to the DAW's PPQ position so the waveform stays grid-aligned with the DAW transport regardless of display duration, BPM changes, or sample rate. In non-sync mode a classic scrolling waveform is shown instead.
 
-| Parameter | ID | Range | Default | Description |
-|---|---|---|---|---|
-| Down Threshold | `down_thresh` | −60 … 0 dB | −12 dB | Level above which downward compression engages |
-| Down Ratio | `down_ratio` | 1 … 20 | 4 | Downward compression ratio (N:1) |
-| Up Threshold | `up_thresh` | −60 … 0 dB | −30 dB | Level below which upward compression engages |
-| Up Ratio | `up_ratio` | 1 … 20 | 4 | Upward compression ratio (N:1) |
-| Attack | `attack_ms` | 0.1 … 200 ms | 10 ms | Attack time for both compressors |
-| Release | `release_ms` | 1 … 2 000 ms | 100 ms | Release time for both compressors |
+🎛️ **Flexible detector** — each stage has its own detector feeding independent one-pole ballistics. The detector can operate in **RMS** (rolling window, O(1)) or **PeakMax** (rolling window max) mode. In BPM-sync mode the detector window is set as a musical fraction (1/32 to 4 beats) and tracks tempo changes automatically, so the compressor's response time stays musically consistent regardless of BPM.
 
-All parameters are fully automatable and saved with the DAW project.
+🎚️ **Independent display toggles** — detector level curves (up/down) and gain-reduction overlays (up/down) can each be shown or hidden independently, keeping the display readable at any complexity level.
 
 ---
 
-## Installation
+## User Guide
 
-### Pre-built Binaries
+### Installation
 
-Download the latest pre-built VST3 from the
-[**Releases**](https://github.com/huberp/phu-compressor/releases) page.
+1. Download the latest release from [Releases](https://github.com/huberp/phu-compressor/releases)
+2. Copy the `.vst3` bundle to your DAW's VST3 folder:
+   - Windows: `C:\Program Files\Common Files\VST3\`
+   - Linux: `~/.vst3/` or `/usr/lib/vst3/`
+3. Rescan plugins in your DAW
+4. Load **PHU COMPRESSOR** on any track
 
-#### Windows
+No external dependencies — the binary is self-contained.
 
-1. Download `PHU-COMPRESSOR-windows.zip` from the latest release.
-2. Extract and copy `PHU COMPRESSOR.vst3` to your VST3 folder:
-   ```
-   C:\Program Files\Common Files\VST3\
-   ```
-3. Rescan plugins in your DAW.
+### Controls
 
-#### Linux
+**Downward group** — compresses signals that exceed the threshold
 
-1. Download `PHU-COMPRESSOR-linux.zip` from the latest release.
-2. Extract and copy `PHU COMPRESSOR.vst3` to:
-   ```bash
-   ~/.vst3/
-   # or system-wide:
-   /usr/lib/vst3/
-   ```
-3. Rescan plugins in your DAW.
-
-### Supported Platforms
-
-| Platform | Architecture | Format |
+| Parameter | Range | Description |
 |---|---|---|
-| Windows 10 / 11 | x64 | VST3 |
-| Ubuntu 22.04+ / Debian | x64 | VST3 |
-| Other Linux | x64 | VST3 (build from source) |
+| Thresh (dB) | −60 … 0 dB | Level above which downward compression engages. |
+| Ratio | 1:1 … 20:1 | Compression ratio above threshold. |
+| Attack (ms) | 0.1 … 500 ms | Time for gain reduction to fully engage after the threshold is crossed. |
+| Release (ms) | 1 … 2000 ms | Time for gain reduction to recover after the signal falls back below threshold. |
+| Level | toggle | Show/hide the downward detector curve in the display. |
 
-> **macOS** is not yet officially supported (contributions welcome — see [Contributing](#contributing)).
+**Upward group** — boosts signals that fall below the threshold
+
+| Parameter | Range | Description |
+|---|---|---|
+| Thresh (dB) | −60 … 0 dB | Level below which upward compression (boost) engages. |
+| Ratio | 1:1 … 20:1 | Upward expansion ratio below threshold. |
+| Attack (ms) | 0.1 … 500 ms | Time for the boost to engage. |
+| Release (ms) | 1 … 2000 ms | Time for the boost to release. |
+| Level | toggle | Show/hide the upward detector curve in the display. |
+
+**Detector group** — controls the level detector shared by both stages
+
+| Parameter | Range | Description |
+|---|---|---|
+| Type | RMS / PeakMax | Sets the detection algorithm. RMS gives smooth, musical response; PeakMax reacts faster to transients. |
+| Sync | toggle | When enabled, the detector window is set as a musical beat fraction that tracks BPM. When disabled, a manual millisecond window is used. |
+| Beat Div | 1/32 … 4 | Beat fraction used as the detector window in Sync mode. 1/32 is fast (transient-accurate); 4 beats is very smooth. |
+| RMS Window (ms) | 1 … 6000 ms | Manual detector window length (visible when Sync is off, RMS mode). |
+| Peak Window (ms) | 1 … 6000 ms | Manual detector window length (visible when Sync is off, PeakMax mode). |
+
+**Display toggles** (below the control panels)
+
+| Toggle | Effect |
+|---|---|
+| Down GR | Show/hide the downward gain reduction overlay (orange, top of display). |
+| Up GR | Show/hide the upward boost overlay (pink/magenta). |
+| Beat Sync | Switch the waveform display between beat-anchored and scrolling modes. |
 
 ---
 
-## Building from Source
+## Building
 
 ### Prerequisites
 
-- **Git** (with submodule support)
-- **CMake ≥ 3.23**
-- **C++17-capable compiler** (MSVC 2022+ on Windows, GCC 11+ / Clang 13+ on Linux)
+| Tool | Minimum version |
+|---|---|
+| CMake | 3.15 |
+| C++ compiler | C++17 — MSVC 2022, GCC 11, or Clang 14 |
+| JUCE | 8.0.12 (included as git submodule) |
 
-Clone the repository *with submodules* (JUCE is a submodule):
+### Clone
 
 ```bash
-git clone --recurse-submodules https://github.com/huberp/phu-compressor.git
+git clone https://github.com/huberp/phu-compressor.git
 cd phu-compressor
-```
-
-If you already cloned without `--recurse-submodules`:
-
-```bash
 git submodule update --init --recursive
 ```
 
----
-
 ### Windows
 
-#### Quick build (batch script)
-
-```bat
-scripts\build.bat
-```
-
-The script configures and builds a Release VST3 using the `vs2026-x64` CMake preset.
-The output is placed in:
-```
-build\vs2026-x64\src\phu-compressor_artefacts\Release\VST3\PHU COMPRESSOR.vst3
-```
-
-#### Create a release package
-
-```bat
-scripts\release.bat
-```
-
-This builds Release and zips the VST3 into `dist\PHU-COMPRESSOR-windows.zip`.
-
-#### Manual steps
-
-```bat
+```bash
 cmake --preset vs2026-x64
 cmake --build --preset release
 ```
 
----
+Output: `build/vs2026-x64/src/phu-compressor_artefacts/Release/VST3/`
 
 ### Linux
 
-Install system dependencies first (Ubuntu / Debian):
-
 ```bash
 sudo bash scripts/install-linux-deps.sh
-```
-
-Then build:
-
-```bash
 cmake --preset linux-release
 cmake --build --preset linux-build
 ```
 
-The built plugin is at:
-```
-build/linux-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3/
-```
+If the build times out: `cmake --build --preset linux-build -j2`
 
-Install to your user VST3 folder:
+Output: `build/linux-release/src/phu-compressor_artefacts/VST3/`
 
-```bash
-cp -r "build/linux-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3" \
-    ~/.vst3/
-```
-
-For detailed Linux instructions see [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md).
+For a full Linux dependency walkthrough see [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md).
 
 ---
 
-### CMake Presets
+## Architecture
 
-| Preset | Platform | Description |
+### Core Components
+
+| Component | Location | Responsibility |
 |---|---|---|
-| `vs2026-x64` | Windows | Visual Studio 2026, x64 |
-| `linux-release` | Linux | Unix Makefiles, Release |
-| `release` (build) | Windows | Release build targeting `phu-compressor_VST3` |
-| `debug` (build) | Windows | Debug build |
-| `linux-build` (build) | Linux | Release build |
+| `OttCompressor` | `src/OttCompressor.h` | Top-level compressor. Owns two `VolumeDetector`s and two `CompressorStage`s (one upward, one downward). Implements the classic OTT signal order: upward detection → upward boost → downward detection → downward compression. A fast peak-follower (5 ms decay) provides per-channel transient protection without per-sample carrier noise. |
+| `CompressorStage` | `src/CompressorStage.h` | One compressor stage (downward or upward). Computes the target gain from the raw (unsmoothed) detector level, then smooths the gain envelope toward that target with separate one-pole attack and release coefficients. Gain ballistics operate on the *gain* domain, not the level domain, to prevent boost tails on transients from the upward stage. |
+| `VolumeDetector` | `src/VolumeDetector.h` | Rolling-window level detector (RMS or PeakMax). RMS uses a running sum for O(1) per sample. PeakMax tracks the max in the window and rescans on eviction. The ring buffer is pre-allocated at `prepare()` to `kDetectorMaxWindowMs` samples — no allocation on the audio thread. |
+| `CompressorDisplay` | `src/CompressorDisplay.h/cpp` | JUCE `Component` rendered at 60 Hz. Unified panel with: (1) a transfer curve with full-colour draggable threshold handles, (2) a rolling or beat-synced waveform showing input level and both GR overlays, and (3) a musical time selector. Pulls all data from lock-free FIFOs and `BeatSyncBuffer`s via `updateFromFifos()`. |
+| `BeatSyncBuffer` | `lib/audio/BeatSyncBuffer.h` | Position-indexed overwrite buffer. Each bin maps to a normalised beat position `[0, 1)`. Audio-thread writes via `write(normalizedPos, value)`; UI-thread reads via `data()`. Single float stores are naturally atomic on x86/x64. |
+| `AudioSampleFifo` | `lib/audio/AudioSampleFifo.h` | Lock-free SPSC FIFO for per-sample audio → UI transport. Used for input level and both gain-reduction streams. |
+| `RmsPacketFifo` | `lib/audio/RmsPacketFifo.h` | Lock-free FIFO carrying batched, PPQ-anchored detector level packets. Allows the display to draw detector curves with musical time alignment. |
+| `SyncGlobals` | `lib/events/SyncGlobals.h` | Holds current BPM, sample rate, and transport PPQ. Written on the audio thread; UI-thread reads `ppqEndOfBlock` via `std::atomic<double>`. |
+| `PluginProcessor` | `src/PluginProcessor.h/cpp` | `AudioProcessor` + APVTS. Owns all DSP, FIFOs, and `BeatSyncBuffer`s. APVTS raw parameter pointers are cached at construction for lock-free audio-thread reads. |
 
----
+### DSP Signal Path
 
-## Project Structure
+```
+processBlock  (audio thread)
+  ├─ Read play-head: extract BPM, PPQ, isPlaying → SyncGlobals
+  │
+  ├─ Push raw input → InputFifo  (for UI input level curve)
+  │
+  ├─ For each sample (L + R independently):
+  │    ├─ detectorUp.processSample(input)   → up level (dB)
+  │    ├─ upStage.processSample(upLevelDb)  → upBoostGain  (≥ 1.0)
+  │    ├─ intermediate = input × upBoostGain
+  │    │
+  │    ├─ detectorDown.processSample(intermediate) → down level (dB)
+  │    └─ downStage.processSample(downLevelDb)     → downGain (≤ 1.0)
+  │         └─ output = intermediate × downGain
+  │
+  ├─ Push downGain  → GainReductionFifo   (for UI down-GR curve)
+  ├─ Push upBoost   → UpGainReductionFifo (for UI up-GR curve)
+  ├─ Accumulate detector levels → RmsPacketFifo (PPQ-anchored, ~4-block batches)
+  │
+  └─ Write beat-sync buffers (PPQ → normalised pos → bin):
+       ├─ m_inputSyncBuf.write(normPos, inputDb)
+       ├─ m_grSyncBuf.write(normPos, downGrDb)
+       └─ m_upGrSyncBuf.write(normPos, upBoostDb)
+
+UI Timer  (60 Hz)
+  ├─ updateFromFifos(): drain all FIFOs → internal ring buffers
+  ├─ If beat-sync mode: snapshot BeatSyncBuffers directly
+  ├─ Repaint transfer curve with current threshold handles
+  └─ Repaint waveform with input, down-GR, up-GR, detector overlays
+```
+
+### Beat-Synced Detector Window
+
+When **Sync** is enabled in the Detector group, the detector window length is computed as:
+
+$$W_{ms} = \frac{60\,000}{\text{BPM}} \times \text{beatFraction}$$
+
+The window is recomputed on every `processBlock` call using the current play-head BPM, so it tracks tempo automation without any user interaction. Supported fractions range from 1/32 (fast, ≈ 15 ms at 120 BPM) to 4 beats (slow, ≈ 2000 ms at 120 BPM).
+
+### Project Layout
 
 ```
 phu-compressor/
+├── CMakeLists.txt / CMakePresets.json
+├── docs/                            Screenshots and build guide
+├── JUCE/                            JUCE 8.0.12 (git submodule)
 ├── src/
-│   ├── OttCompressor.h        # Core DSP — OTT-style compressor (header-only)
-│   ├── PluginProcessor.cpp/.h # JUCE AudioProcessor: parameter setup & audio routing
-│   ├── PluginEditor.cpp/.h    # JUCE AudioProcessorEditor: slider UI
-│   └── CMakeLists.txt         # Plugin target definition
-├── JUCE/                      # JUCE framework (git submodule)
-├── scripts/
-│   ├── build.bat              # Windows quick-build script
-│   ├── release.bat            # Windows release-package script
-│   └── install-linux-deps.sh  # Linux dependency installer
-├── docs/
-│   └── LINUX_BUILD.md         # Detailed Linux build guide
-├── .github/
-│   └── workflows/
-│       ├── build.yml          # CI: build + pluginval on every push/PR
-│       └── release.yml        # CD: publish a GitHub Release on version tags
-├── CMakeLists.txt
-├── CMakePresets.json
-└── LICENSE                    # MIT
+│   ├── PluginProcessor.h/cpp        processBlock, OTT compressor, FIFOs,
+│   │                                BeatSyncBuffers, APVTS
+│   ├── PluginEditor.h/cpp           UI layout, 60 Hz timer, APVTS attachments
+│   ├── CompressorDisplay.h/cpp      Transfer curve + rolling/beat-sync waveform
+│   ├── OttCompressor.h              Upward + downward compressor chain
+│   ├── CompressorStage.h            One compressor stage (up or down)
+│   ├── VolumeDetector.h             RMS / PeakMax rolling-window detector
+│   ├── PluginConstants.h            Beat-division tables, buffer size constants
+│   └── CMakeLists.txt
+├── lib/
+│   ├── audio/
+│   │   ├── AudioSampleFifo.h        Lock-free SPSC FIFO (audio→UI)
+│   │   ├── BeatSyncBuffer.h         Position-indexed overwrite buffer
+│   │   ├── BucketSet.h              Dirty-tracked bucket partitioning
+│   │   ├── RmsPacketFifo.h          PPQ-anchored detector level packets
+│   │   ├── PpqRingBuffer.h          PPQ-indexed ring buffer helper
+│   │   └── PacketFifo.h             Generic lock-free packet FIFO
+│   └── events/
+│       ├── SyncGlobals.h            BPM / PPQ / transport state
+│       ├── SyncGlobalsListener.h    Event listener interface
+│       └── Event.h / EventSource.h  Typed event infrastructure
+├── .github/workflows/               CI build + pluginval + release workflows
+└── scripts/
+    ├── build.bat                    Windows convenience build script
+    ├── release.bat                  Windows release packaging script
+    └── install-linux-deps.sh        Installs JUCE Linux dependencies
 ```
 
 ---
 
 ## Contributing
 
-Contributions, bug reports and feature requests are welcome!
+Contributions are welcome.
 
-1. **Fork** the repository.
-2. **Create a branch**: `git checkout -b feature/my-feature`
-3. **Commit** your changes with a clear message.
-4. **Open a Pull Request** against `main`.
+1. Fork and branch from `main`
+2. Follow existing C++17/JUCE code style
+3. No memory allocation, system calls, or locks on the audio thread
+4. Verify the project builds and passes pluginval before opening a PR
 
-Please keep code style consistent with the existing `.clang-format` configuration
-(`BasedOnStyle: Google`, 100-column line limit).
-
-Ideas for future improvements:
-
-- macOS / AU support
-- Gain reduction meter in the UI
-- Mid/Side processing mode
-- Multiband (phu-splitter integration)
+**Bug reports** — please include DAW name/version, OS, and reproduction steps in a [GitHub Issue](https://github.com/huberp/phu-compressor/issues).
 
 ---
 
 ## License
 
-[MIT License](LICENSE) — © 2026 huberp
-
-You are free to use, modify, and distribute this plugin in both open-source and commercial
-projects. Attribution is appreciated but not required.
-
----
-
-## Acknowledgements
-
-- [**JUCE**](https://juce.com/) — cross-platform C++ audio framework (ISC / GPL)
-- [**pluginval**](https://github.com/Tracktion/pluginval) — plugin validation used in CI
-- Inspired by the classic **OTT** multiband compressor preset
+[MIT](LICENSE)
