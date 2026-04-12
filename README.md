@@ -20,7 +20,6 @@ A VST3 single-band OTT-style compressor combining upward and downward compressio
 - [User Guide](#user-guide)
 - [Building](#building)
 - [Architecture](#architecture)
-- [Contributing](#contributing)
 - [License](#license)
 
 ---
@@ -194,55 +193,6 @@ When **Sync** is enabled in the Detector group, the detector window length is co
 $$W_{ms} = \frac{60\,000}{\text{BPM}} \times \text{beatFraction}$$
 
 The window is recomputed on every `processBlock` call using the current play-head BPM, so it tracks tempo automation without any user interaction. Supported fractions range from 1/32 (fast, ≈ 15 ms at 120 BPM) to 4 beats (slow, ≈ 2000 ms at 120 BPM).
-
-### Project Layout
-
-```
-phu-compressor/
-├── CMakeLists.txt / CMakePresets.json
-├── docs/                            Screenshots and build guide
-├── JUCE/                            JUCE 8.0.12 (git submodule)
-├── src/
-│   ├── PluginProcessor.h/cpp        processBlock, OTT compressor, FIFOs,
-│   │                                BeatSyncBuffers, APVTS
-│   ├── PluginEditor.h/cpp           UI layout, 60 Hz timer, APVTS attachments
-│   ├── CompressorDisplay.h/cpp      Transfer curve + rolling/beat-sync waveform
-│   ├── OttCompressor.h              Upward + downward compressor chain
-│   ├── CompressorStage.h            One compressor stage (up or down)
-│   ├── VolumeDetector.h             RMS / PeakMax rolling-window detector
-│   ├── PluginConstants.h            Beat-division tables, buffer size constants
-│   └── CMakeLists.txt
-├── lib/
-│   ├── audio/
-│   │   ├── AudioSampleFifo.h        Lock-free SPSC FIFO (audio→UI)
-│   │   ├── BeatSyncBuffer.h         Position-indexed overwrite buffer
-│   │   ├── BucketSet.h              Dirty-tracked bucket partitioning
-│   │   ├── RmsPacketFifo.h          PPQ-anchored detector level packets
-│   │   ├── PpqRingBuffer.h          PPQ-indexed ring buffer helper
-│   │   └── PacketFifo.h             Generic lock-free packet FIFO
-│   └── events/
-│       ├── SyncGlobals.h            BPM / PPQ / transport state
-│       ├── SyncGlobalsListener.h    Event listener interface
-│       └── Event.h / EventSource.h  Typed event infrastructure
-├── .github/workflows/               CI build + pluginval + release workflows
-└── scripts/
-    ├── build.bat                    Windows convenience build script
-    ├── release.bat                  Windows release packaging script
-    └── install-linux-deps.sh        Installs JUCE Linux dependencies
-```
-
----
-
-## Contributing
-
-Contributions are welcome.
-
-1. Fork and branch from `main`
-2. Follow existing C++17/JUCE code style
-3. No memory allocation, system calls, or locks on the audio thread
-4. Verify the project builds and passes pluginval before opening a PR
-
-**Bug reports** — please include DAW name/version, OS, and reproduction steps in a [GitHub Issue](https://github.com/huberp/phu-compressor/issues).
 
 ---
 
