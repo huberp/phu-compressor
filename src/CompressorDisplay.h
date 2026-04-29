@@ -4,13 +4,13 @@
 #include "audio/AudioSampleFifo.h"
 #include "audio/BeatSyncBuffer.h"
 #include "audio/BucketSet.h"
-#include "audio/PpqRingBuffer.h"
+#include "audio/PpqAddressedRingBuffer.h"
 #include "audio/RmsPacketFifo.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using phu::audio::AudioSampleFifo;
-using phu::audio::BeatSyncBuffer;
+using phu::audio::BeatSyncBufferF;
 using phu::audio::RmsPacketFifo;
 using phu::audio::RmsPacket;
 
@@ -58,9 +58,9 @@ class CompressorDisplay : public juce::Component,
     bool isBeatSyncMode() const { return beatSyncMode; }
 
     /** Point to the processor's beat-sync buffers (call once from editor constructor). */
-    void setBeatSyncBuffers(const BeatSyncBuffer& input,
-                            const BeatSyncBuffer& downGr,
-                            const BeatSyncBuffer& upGr);
+    void setBeatSyncBuffers(const BeatSyncBufferF& input,
+                            const BeatSyncBufferF& downGr,
+                            const BeatSyncBufferF& upGr);
 
     /** Set current playhead PPQ for cursor position (call from timerCallback). */
     void setCurrentPpq(double ppq) { currentPpq = ppq; }
@@ -137,9 +137,9 @@ class CompressorDisplay : public juce::Component,
 
     // --- Beat-sync state ---
     bool beatSyncMode = false;
-    const BeatSyncBuffer* inputSyncBuf    = nullptr;
-    const BeatSyncBuffer* downGrSyncBuf   = nullptr;
-    const BeatSyncBuffer* upGrSyncBuf     = nullptr;
+    const BeatSyncBufferF* inputSyncBuf    = nullptr;
+    const BeatSyncBufferF* downGrSyncBuf   = nullptr;
+    const BeatSyncBufferF* upGrSyncBuf     = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
 
@@ -148,7 +148,7 @@ class CompressorDisplay : public juce::Component,
         RmsDisplayChannel()
             : rmsRing(kMinBPM, kMaxSampleRate, kDisplayMaxBeatFraction)
         {}
-        phu::audio::PpqRingBufferF rmsRing;    // PPQ-indexed ring of linear power (x^2)
+        phu::audio::PpqAddressedRingBufferF rmsRing;    // PPQ-indexed ring of linear power (x^2)
         phu::audio::BucketSet      bucketSet;
         std::vector<float>         paintValues; // one RMS dB value per bucket
     };

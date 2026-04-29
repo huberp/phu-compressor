@@ -6,10 +6,6 @@ target_include_directories(CompressorLib INTERFACE
 )
 
 target_sources(CompressorLib INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/audio/BeatSyncBuffer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/audio/BucketSet.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/audio/PacketFifo.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/audio/PpqRingBuffer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/RmsPacketFifo.h
 )
 

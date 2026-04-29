@@ -139,9 +139,9 @@ void CompressorDisplay::setBeatSyncMode(bool enabled) {
     repaint();
 }
 
-void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBuffer& input,
-                                            const BeatSyncBuffer& downGr,
-                                            const BeatSyncBuffer& upGr) {
+void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBufferF& input,
+                                            const BeatSyncBufferF& downGr,
+                                            const BeatSyncBufferF& upGr) {
     inputSyncBuf  = &input;
     downGrSyncBuf = &downGr;
     upGrSyncBuf   = &upGr;
@@ -868,7 +868,7 @@ void CompressorDisplay::insertPacketToChannel(RmsDisplayChannel& ch,
     juce::FloatVectorOperations::multiply(m_rmsSquaredTemp.data(),
                                           packet.data, packet.data, count);
 
-    const phu::audio::WriteResult result =
+    const phu::audio::RingBufferInsertResult result =
         ch.rmsRing.insert(packet.startPpq, m_rmsSquaredTemp.data(), count);
     ch.bucketSet.setDirty(result);
 }
@@ -993,7 +993,7 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
     const float attenAreaHeight = area.getHeight() * 0.3f;
     const float boostAreaHeight = area.getHeight() * 0.3f;
 
-    auto avgSyncBuf = [&](const BeatSyncBuffer* buf) {
+    auto avgSyncBuf = [&](const BeatSyncBufferF* buf) {
         if (buf == nullptr || buf->size() <= 0) return false;
         const int numBins = buf->size();
         const float* bins = buf->data();

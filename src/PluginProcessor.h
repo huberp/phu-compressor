@@ -9,7 +9,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 using phu::audio::AudioSampleFifo;
-using phu::audio::BeatSyncBuffer;
+using phu::audio::BeatSyncBufferF;
 using phu::audio::RmsPacketFifo;
 using phu::audio::RmsPacket;
 using phu::events::SyncGlobals;
@@ -64,9 +64,9 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     }
 
     // Beat-sync buffer access (read-only pointers for UI)
-    const BeatSyncBuffer& getInputSyncBuffer() const { return m_inputSyncBuf; }
-    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
-    const BeatSyncBuffer& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
+    const BeatSyncBufferF& getInputSyncBuffer() const { return m_inputSyncBuf; }
+    const BeatSyncBufferF& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
+    const BeatSyncBufferF& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
 
     /** Set the display range in beats (called from UI thread). */
     void setDisplayRangeBeats(double beats) {
@@ -143,9 +143,9 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     SyncGlobals m_syncGlobals;
 
     // Beat-sync position-indexed buffers (written per-sample in processBlock)
-    BeatSyncBuffer m_inputSyncBuf;
-    BeatSyncBuffer m_grSyncBuf;     // downward GR
-    BeatSyncBuffer m_upGrSyncBuf;   // upward boost
+    BeatSyncBufferF m_inputSyncBuf;
+    BeatSyncBufferF m_grSyncBuf;     // downward GR
+    BeatSyncBufferF m_upGrSyncBuf;   // upward boost
     std::atomic<double> m_displayRangeBeats{4.0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessor)
