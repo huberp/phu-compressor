@@ -1,15 +1,26 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 
+// ── Editor layout / style constants ──────────────────────────────────────────
+static constexpr int   kEditorWidth          = 800;
+static constexpr int   kEditorHeight         = 644;
+static constexpr int   kTimerHz              = 60;
+static constexpr int   kTitleHeight          = 28;
+static constexpr float kTitleFontSize        = 14.0f;
+static constexpr float kLabelFontSize        = 11.0f;
+static constexpr float kInfoLabelFontSize    =  9.0f;
+static constexpr int   kSliderTextBoxWidth   = 50;
+static constexpr int   kSliderTextBoxHeight  = 20;
+
 static void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text,
                         juce::Component* parent) {
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centredLeft);
-    label.setFont(juce::FontOptions(11.0f));
+    label.setFont(juce::FontOptions(kLabelFontSize));
     parent->addAndMakeVisible(label);
 
     slider.setSliderStyle(juce::Slider::LinearHorizontal);
-    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, kSliderTextBoxWidth, kSliderTextBoxHeight);
     parent->addAndMakeVisible(slider);
 }
 
@@ -54,7 +65,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     // Detector type combo
     detectorTypeLabel.setText("Type", juce::dontSendNotification);
     detectorTypeLabel.setJustificationType(juce::Justification::centredLeft);
-    detectorTypeLabel.setFont(juce::FontOptions(11.0f));
+    detectorTypeLabel.setFont(juce::FontOptions(kLabelFontSize));
     addAndMakeVisible(detectorTypeLabel);
     detectorTypeCombo.addItem("RMS", 1);
     detectorTypeCombo.addItem("Peak", 2);
@@ -70,7 +81,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     // RMS beat division combo
     rmsBeatDivLabel.setText("Beat Div", juce::dontSendNotification);
     rmsBeatDivLabel.setJustificationType(juce::Justification::centredLeft);
-    rmsBeatDivLabel.setFont(juce::FontOptions(11.0f));
+    rmsBeatDivLabel.setFont(juce::FontOptions(kLabelFontSize));
     addAndMakeVisible(rmsBeatDivLabel);
     for (int i = 0; i < kDetectorNumDivisions; ++i)
         rmsBeatDivCombo.addItem(kDetectorBeatLabels[i], i + 1);
@@ -92,7 +103,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
 
     // RMS info readout label
     rmsInfoLabel.setJustificationType(juce::Justification::centred);
-    rmsInfoLabel.setFont(juce::FontOptions(9.0f));
+    rmsInfoLabel.setFont(juce::FontOptions(kInfoLabelFontSize));
     rmsInfoLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
     addAndMakeVisible(rmsInfoLabel);
 
@@ -158,8 +169,8 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
 
     updateDetectorControlVisibility();
 
-    setSize(800, 644);
-    startTimerHz(60);
+    setSize(kEditorWidth, kEditorHeight);
+    startTimerHz(kTimerHz);
 }
 
 PhuCompressorAudioProcessorEditor::~PhuCompressorAudioProcessorEditor() {
@@ -196,7 +207,7 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
     auto& syncGlobals = audioProcessor.getSyncGlobals();
     compressorDisplay.setSampleRate(syncGlobals.getSampleRate() > 0
                                         ? syncGlobals.getSampleRate()
-                                        : 48000.0);
+                                        : kFallbackSampleRate);
     compressorDisplay.setBPM(syncGlobals.getBPM());
 
     // Beat-sync: pass PPQ and keep display range in sync with processor
@@ -234,14 +245,14 @@ void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 
     g.setColour(juce::Colours::white);
-    g.setFont(juce::FontOptions(14.0f).withStyle("Bold"));
-    g.drawText("PHU COMPRESSOR", getLocalBounds().removeFromTop(28),
+    g.setFont(juce::FontOptions(kTitleFontSize).withStyle("Bold"));
+    g.drawText("PHU COMPRESSOR", getLocalBounds().removeFromTop(kTitleHeight),
                juce::Justification::centred, true);
 }
 
 void PhuCompressorAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(10);
-    area.removeFromTop(28); // Title
+    area.removeFromTop(kTitleHeight); // Title
 
     // ── Layout constants (aligned with phu-splitter style) ────────────────
     constexpr int kRowHeight = 24;

@@ -32,13 +32,26 @@ class CompressorDisplay : public juce::Component,
     static constexpr int kMaxPullSamples = 8192;
     static constexpr int kMaxDisplayWidth = 4096;
 
-    // dB range for all displays
-    static constexpr float kMinDb = -60.0f;
-    static constexpr float kMaxDb = 0.0f;
-    static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
+    // dB range — canonical values live in PluginConstants.h (kDisplayMinDb, kDisplayMaxDb,
+    // kDisplayGrMaxDb). These aliases keep call-sites inside CompressorDisplay concise.
+    static constexpr float kMinDb   = kDisplayMinDb;
+    static constexpr float kMaxDb   = kDisplayMaxDb;
+    static constexpr float kGrMaxDb = kDisplayGrMaxDb;
 
     // Musical time options live in PluginConstants.h (kDisplay*).
     // kDisplayNumRanges, kDisplayBeatFractions, kDisplayBeatLabels.
+
+    // ── Layout constants ───────────────────────────────────────────────────
+    /// Height of the time-selector bar at the bottom of the display (px).
+    static constexpr int kTimeBarHeight = 24;
+    /// Width of the vertical separator between transfer-curve and waveform areas (px).
+    static constexpr int kSeparatorWidth = 2;
+    /// Fraction of the total display width allocated to the transfer-curve panel.
+    static constexpr float kTransferCurveWidthFraction = 0.35f;
+    /// JUCE radio-group ID for the time-selector buttons.
+    static constexpr int kTimeButtonGroupId = 1001;
+    /// Fraction of the waveform area height used for each GR/boost overlay.
+    static constexpr float kGrOverlayHeightFraction = 0.3f;
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;

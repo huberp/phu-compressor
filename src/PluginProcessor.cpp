@@ -30,7 +30,7 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = 2;
+    spec.numChannels = kNumStereoChannels;
     compressor.prepare(spec);
 
     m_inputFifo.reset();
@@ -43,15 +43,15 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_accumStartPpq   = 0.0;
 
     // Pre-allocate temp buffers with headroom — never reallocate on the audio thread
-    const int bufSize = juce::jmax(samplesPerBlock, 8192);
-    m_grBuffer.setSize(2, bufSize);
-    m_upGrBuffer.setSize(2, bufSize);
+    const int bufSize = juce::jmax(samplesPerBlock, kPrepareBufferHeadroom);
+    m_grBuffer.setSize(kNumStereoChannels, bufSize);
+    m_upGrBuffer.setSize(kNumStereoChannels, bufSize);
     m_syncGlobals.updateSampleRate(sampleRate);
 
-    // Beat-sync buffers: 4096 bins for position-indexed display
-    m_inputSyncBuf.prepare(4096);
-    m_grSyncBuf.prepare(4096);
-    m_upGrSyncBuf.prepare(4096);
+    // Beat-sync buffers: kBeatSyncBufferBins bins for position-indexed display
+    m_inputSyncBuf.prepare(kBeatSyncBufferBins);
+    m_grSyncBuf.prepare(kBeatSyncBufferBins);
+    m_upGrSyncBuf.prepare(kBeatSyncBufferBins);
 }
 
 void PhuCompressorAudioProcessor::releaseResources() {
@@ -82,7 +82,7 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     if (detType == 0) {
         // RMS mode: check BPM sync
-        const bool rmsSynced = rmsSyncModePtr->load() >= 0.5f;
+        const bool rmsSynced = rmsSyncModePtr->load() >= kRmsSyncToggleThreshold;
         if (rmsSynced && m_syncGlobals.getBPM() > 0.0) {
             const int beatIdx = juce::jlimit(0, kDetectorNumDivisions - 1,
                                              static_cast<int>(rmsBeatDivPtr->load()));
@@ -90,7 +90,7 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             const float windowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
             // No upper clamp — VolumeDetector buffer supports up to kDetectorMaxWindowMs ms.
-            compressor.setDetectorWindowMs(std::max(1.0f, windowMs));
+            compressor.setDetectorWindowMs(std::max(kDetectorMinWindowMs, windowMs));
         } else {
             compressor.setDetectorWindowMs(rmsWindowMsPtr->load());
         }
@@ -193,15 +193,15 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 // Input: stereo → mono → abs → dB
                 const float monoIn = (outputPtrs[0][i] + outputPtrs[1][i]) * 0.5f;
                 const float absIn = std::abs(monoIn);
-                const float inDb = (absIn > 1e-10f) ? 20.0f * std::log10(absIn) : -60.0f;
+                const float inDb = (absIn > kLinearNoiseFloor) ? 20.0f * std::log10(absIn) : kDisplayMinDb;
 
                 // Down GR: stereo → min → dB (linear ≤ 1 → negative dB)
                 const float grLin  = std::min(grPtrs[0][i], grPtrs[1][i]);
-                const float grDb   = (grLin > 1e-10f) ? 20.0f * std::log10(grLin) : -24.0f;
+                const float grDb   = (grLin > kLinearNoiseFloor) ? 20.0f * std::log10(grLin) : -kDisplayGrMaxDb;
 
                 // Up boost: stereo → max → dB (linear ≥ 1 → positive dB)
                 const float upLin  = std::max(upGrPtrs[0][i], upGrPtrs[1][i]);
-                const float upDb   = (upLin > 1e-10f) ? 20.0f * std::log10(upLin) : 0.0f;
+                const float upDb   = (upLin > kLinearNoiseFloor) ? 20.0f * std::log10(upLin) : 0.0f;
 
                 m_inputSyncBuf.write(normPos, inDb);
                 m_grSyncBuf.write(normPos, grDb);

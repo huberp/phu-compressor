@@ -29,6 +29,48 @@ static constexpr double kMaxSampleRate = 192000.0;
 /// Lowest supported tempo — determines maximum detector window length.
 static constexpr double kMinBPM = 40.0;
 
+// ── Channel / buffer constants ─────────────────────────────────────────────────
+
+/// Number of stereo channels processed throughout the plugin.
+static constexpr int kNumStereoChannels = 2;
+
+/// Extra headroom added to temp buffers in prepareToPlay() to avoid
+/// reallocation on the audio thread when block size increases slightly.
+static constexpr int kPrepareBufferHeadroom = 8192;
+
+/// Number of position-indexed bins in the beat-sync display buffers.
+static constexpr int kBeatSyncBufferBins = 4096;
+
+// ── Detector parameter ranges ─────────────────────────────────────────────────
+
+/// Minimum detector window length in milliseconds.
+static constexpr float kDetectorMinWindowMs = 1.0f;
+
+/// APVTS stores booleans as floats; values ≥ this threshold are treated as true.
+static constexpr float kRmsSyncToggleThreshold = 0.5f;
+
+// ── Fallback defaults ─────────────────────────────────────────────────────────
+
+/// Fallback sample rate used before the DAW calls prepareToPlay().
+static constexpr double kFallbackSampleRate = 48000.0;
+
+/// Fallback tempo used when no BPM information is available from the DAW.
+static constexpr double kFallbackBPM = 120.0;
+
+// ── Display dB conventions ────────────────────────────────────────────────────
+
+/// Minimum linear amplitude treated as non-zero for dB conversion (avoids log(0)).
+static constexpr float kLinearNoiseFloor = 1.0e-10f;
+
+/// Bottom of the dB scale for waveform and transfer-curve displays.
+static constexpr float kDisplayMinDb = -60.0f;
+
+/// Top of the dB scale for waveform and transfer-curve displays.
+static constexpr float kDisplayMaxDb = 0.0f;
+
+/// Maximum gain-reduction / upward-boost depth shown in the UI (dB).
+static constexpr float kDisplayGrMaxDb = 24.0f;
+
 // ── Detector beat divisions ───────────────────────────────────────────────────
 // Governs the RMS/PeakMax detector window length when BPM-sync mode is active.
 // MUST stay consistent with: rmsBeatDivCombo item order, kParamRmsBeatDiv choice list.

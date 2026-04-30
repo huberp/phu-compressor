@@ -103,14 +103,14 @@ class CompressorStage {
         //
         // For Downward: magnitude grows when gain goes more negative → target < gainEnv
         // For Upward:   magnitude grows when gain goes more positive → target > gainEnv
-        SampleType& genv = gainEnv[channel];
+        SampleType& gainEnvelope = gainEnv[channel];
         const bool attacking = (direction == StageDirection::Downward)
-                                   ? (targetGainDb < genv)
-                                   : (targetGainDb > genv);
+                                   ? (targetGainDb < gainEnvelope)
+                                   : (targetGainDb > gainEnvelope);
         const SampleType coeff = attacking ? attackCoeff : releaseCoeff;
-        genv = targetGainDb + coeff * (genv - targetGainDb);
+        gainEnvelope = targetGainDb + coeff * (gainEnvelope - targetGainDb);
 
-        return { genv, std::abs(genv) };
+        return { gainEnvelope, std::abs(gainEnvelope) };
     }
 
   private:

@@ -141,8 +141,9 @@ class OttCompressor {
 
   private:
     static SampleType dbToLinear(SampleType dB) {
-        constexpr SampleType kLog10Over20 = SampleType(0.11512925464970228);
-        return std::exp(dB * kLog10Over20);
+        // ln(10)/20 converts dB to nepers: exp(dB * ln(10)/20) = 10^(dB/20)
+        constexpr SampleType kLn10Over20 = SampleType(0.11512925464970228);
+        return std::exp(dB * kLn10Over20);
     }
 
     static SampleType linearToDb(SampleType linear) {
