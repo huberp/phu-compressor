@@ -60,7 +60,7 @@ CompressorDisplay::CompressorDisplay(juce::AudioProcessorValueTreeState& apvtsRe
     for (int i = 0; i < kDisplayNumRanges; ++i) {
         timeButtons[static_cast<size_t>(i)].setButtonText(kDisplayBeatLabels[i]);
         timeButtons[static_cast<size_t>(i)].setClickingTogglesState(true);
-        timeButtons[static_cast<size_t>(i)].setRadioGroupId(1001);
+        timeButtons[static_cast<size_t>(i)].setRadioGroupId(kTimeButtonGroupId);
         timeButtons[static_cast<size_t>(i)].setToggleState(
             i == selectedTimeIndex, juce::dontSendNotification);
         timeButtons[static_cast<size_t>(i)].onClick = [this, i]() {
@@ -117,9 +117,9 @@ void CompressorDisplay::updateDisplayDurationFromBPM() {
         displayDurationMs = static_cast<float>(
             (static_cast<double>(beatFraction) / currentBPM) * 60000.0);
     } else {
-        // Fallback: assume 120 BPM
+        // Fallback: assume kFallbackBPM
         displayDurationMs = static_cast<float>(
-            (static_cast<double>(beatFraction) / 120.0) * 60000.0);
+            (static_cast<double>(beatFraction) / kFallbackBPM) * 60000.0);
     }
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, displayDurationMs);
 }
@@ -210,7 +210,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float mono = (tempL[static_cast<size_t>(i)] + tempR[static_cast<size_t>(i)]) * 0.5f;
                 float absMono = std::abs(mono);
-                float db = (absMono > 1e-10f)
+                float db = (absMono > kLinearNoiseFloor)
                                ? 20.0f * std::log10(absMono)
                                : kMinDb;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
@@ -229,7 +229,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float gain = juce::jmin(tempL[static_cast<size_t>(i)],
                                         tempR[static_cast<size_t>(i)]);
-                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : -kGrMaxDb;
+                float db = (gain > kLinearNoiseFloor) ? 20.0f * std::log10(gain) : -kGrMaxDb;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(-kGrMaxDb, 0.0f, db);
             }
             appendToRing(downGrRing, tempL.data(), got);
@@ -246,7 +246,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float gain = juce::jmax(tempL[static_cast<size_t>(i)],
                                         tempR[static_cast<size_t>(i)]);
-                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : 0.0f;
+                float db = (gain > kLinearNoiseFloor) ? 20.0f * std::log10(gain) : 0.0f;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(0.0f, kGrMaxDb, db);
             }
             appendToRing(upGrRing, tempL.data(), got);
@@ -262,7 +262,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             else {
                 for (int i = 0; i < packet.count; ++i) {
                     const float rms = packet.data[static_cast<size_t>(i)];
-                    const float db = (rms > 1.0e-10f) ? 20.0f * std::log10(rms) : kMinDb;
+                    const float db = (rms > kLinearNoiseFloor) ? 20.0f * std::log10(rms) : kMinDb;
                     tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
                 }
                 appendToRing(detectorRing, tempL.data(), packet.count);
@@ -280,7 +280,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             else {
                 for (int i = 0; i < packet.count; ++i) {
                     const float rms = packet.data[static_cast<size_t>(i)];
-                    const float db = (rms > 1.0e-10f) ? 20.0f * std::log10(rms) : kMinDb;
+                    const float db = (rms > kLinearNoiseFloor) ? 20.0f * std::log10(rms) : kMinDb;
                     tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
                 }
                 appendToRing(downDetectorRing, tempL.data(), packet.count);
@@ -296,24 +296,24 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
 
 juce::Rectangle<int> CompressorDisplay::getTransferCurveArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
     // Make it square, limited by height
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24); // 24px for time bar
-    return bounds.removeFromLeft(side).withTrimmedBottom(24);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.removeFromLeft(side).withTrimmedBottom(kTimeBarHeight);
 }
 
 juce::Rectangle<int> CompressorDisplay::getWaveformArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24);
-    return bounds.withTrimmedLeft(side + 2).withTrimmedBottom(24); // 2px separator
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.withTrimmedLeft(side + kSeparatorWidth).withTrimmedBottom(kTimeBarHeight);
 }
 
 juce::Rectangle<int> CompressorDisplay::getTimeBarArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24);
-    return bounds.withTrimmedLeft(side + 2).removeFromBottom(24);
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.withTrimmedLeft(side + kSeparatorWidth).removeFromBottom(kTimeBarHeight);
 }
 
 void CompressorDisplay::resized() {
@@ -659,8 +659,8 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
         return;
 
     const float samplesPerPixel    = static_cast<float>(displaySamples) / static_cast<float>(w);
-    const float attenAreaHeight    = area.getHeight() * 0.3f;
-    const float boostAreaHeight    = area.getHeight() * 0.3f;
+    const float attenAreaHeight    = area.getHeight() * kGrOverlayHeightFraction;
+    const float boostAreaHeight    = area.getHeight() * kGrOverlayHeightFraction;
 
     // Helper: average a ring into paintBufAvgDb
     auto avgRing = [&](RingBuffer& ring) {
@@ -990,8 +990,8 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
     const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
     if (w <= 0) return;
 
-    const float attenAreaHeight = area.getHeight() * 0.3f;
-    const float boostAreaHeight = area.getHeight() * 0.3f;
+    const float attenAreaHeight = area.getHeight() * kGrOverlayHeightFraction;
+    const float boostAreaHeight = area.getHeight() * kGrOverlayHeightFraction;
 
     auto avgSyncBuf = [&](const BeatSyncBufferF* buf) {
         if (buf == nullptr || buf->size() <= 0) return false;
