@@ -122,7 +122,7 @@ class CompressorStage {
             // Releasing — choose snap or normal
             if (direction == StageDirection::Upward
                 && snapReleaseEnabled
-                && (genv - targetGainDb) > SampleType(6.0)) // >6 dB jump = transient arrived
+                && (genv - targetGainDb) > kSnapReleaseThresholdDb)
             {
                 coeff = snapReleaseCoeff;
             } else {
@@ -155,6 +155,11 @@ class CompressorStage {
     // Prevents boosting quantization/circuit noise and keeps max boost proportional
     // to threshold, making the display and audio behaviour predictable.
     static constexpr SampleType kUpwardFloorDb = SampleType(-80);
+
+    // Minimum gain-envelope drop (dB) required to trigger snap release.
+    // Detects a silence-to-transient event: the upward boost built up during silence
+    // collapses instantly when the target drops by more than this amount.
+    static constexpr SampleType kSnapReleaseThresholdDb = SampleType(6.0);
 
     // ── State ────────────────────────────────────────────────────────────
 

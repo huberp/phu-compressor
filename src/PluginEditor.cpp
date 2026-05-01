@@ -69,9 +69,12 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
         upSnapReleaseLabel.setVisible(snapOn);
         resized();
     };
-    // Initial visibility: hidden until toggle is on
-    upSnapReleaseSlider.setVisible(false);
-    upSnapReleaseLabel.setVisible(false);
+    // Initial visibility: match the loaded parameter state
+    {
+        const bool snapOn = upSnapReleaseEnabledToggle.getToggleState();
+        upSnapReleaseSlider.setVisible(snapOn);
+        upSnapReleaseLabel.setVisible(snapOn);
+    }
 
     // Detector type combo
     detectorTypeLabel.setText("Type", juce::dontSendNotification);
