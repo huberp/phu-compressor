@@ -311,10 +311,10 @@ PhuCompressorAudioProcessor::createParameterLayout() {
         juce::ParameterID{kParamUpAttack, 1}, "Up Attack (ms)",
         juce::NormalisableRange<float>(0.01f, 1000.0f, 0.01f, 0.35f), 10.0f));
 
-    // Up Release: 0.1 ms to 2000 ms, default 100 ms
+    // Up Release: 0.1 ms to 2000 ms, default 25 ms
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamUpRelease, 1}, "Up Release (ms)",
-        juce::NormalisableRange<float>(0.1f, 2000.0f, 0.01f, 0.5f), 100.0f));
+        juce::NormalisableRange<float>(0.1f, 2000.0f, 0.01f, 0.5f), 25.0f));
 
     // ── Detector parameters ──────────────────────────────────────────────
 

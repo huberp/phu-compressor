@@ -71,7 +71,7 @@ A VST3 single-band OTT-style compressor combining upward and downward compressio
 | Thresh (dB) | −60 … 0 dB | Level below which upward compression (boost) engages. |
 | Ratio | 1:1 … 20:1 | Upward expansion ratio below threshold. |
 | Attack (ms) | 0.1 … 500 ms | Time for the boost to engage. |
-| Release (ms) | 1 … 2000 ms | Time for the boost to release. |
+| Release (ms) | 0.1 … 2000 ms | Time for the boost to release. Default: 25 ms. |
 | Level | toggle | Show/hide the upward detector curve in the display. |
 
 **Detector group** — controls the level detector shared by both stages
