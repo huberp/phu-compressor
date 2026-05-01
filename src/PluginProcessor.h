@@ -94,6 +94,10 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     static constexpr const char* kParamRmsBeatDiv   = "rms_beat_div";
     static constexpr const char* kParamPeakWindowMs  = "peak_window_ms";
 
+    // Parameter IDs — lookahead (2 new)
+    static constexpr const char* kParamLookaheadEnabled = "lookahead_enabled";
+    static constexpr const char* kParamLookaheadMs      = "lookahead_ms";
+
     // Beat-division fractions and labels live in PluginConstants.h (kDetector*).
     // kDetectorNumDivisions, kDetectorBeatFractions, kDetectorBeatLabels.
 
@@ -123,6 +127,10 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     std::atomic<float>* rmsSyncModePtr{nullptr};
     std::atomic<float>* rmsBeatDivPtr{nullptr};
     std::atomic<float>* peakWindowMsPtr{nullptr};
+
+    // Lookahead parameter pointers
+    std::atomic<float>* lookaheadEnabledPtr {nullptr};
+    std::atomic<float>* lookaheadMsPtr      {nullptr};
 
     // Lock-free FIFOs for audio→UI data transfer
     AudioSampleFifo<2> m_inputFifo;

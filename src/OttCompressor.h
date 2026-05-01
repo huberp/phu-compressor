@@ -37,6 +37,14 @@ class OttCompressor {
         fastPeakDecay_ = std::exp(SampleType(-1)
                                   / (static_cast<SampleType>(spec.sampleRate)
                                      * kFastPeakMs * SampleType(0.001)));
+        // Store sample rate and reset the lookahead delay line
+        currentSampleRate_ = static_cast<SampleType>(spec.sampleRate);
+        for (int ch = 0; ch < kMaxChannels; ++ch) {
+            std::fill(std::begin(lookaheadBuf_[ch]), std::end(lookaheadBuf_[ch]),
+                      SampleType(0));
+            lookaheadWritePos_[ch] = 0;
+        }
+        lookaheadDelaySamples_ = 0;
         reset();
     }
 
@@ -47,6 +55,11 @@ class OttCompressor {
         upStage.reset();
         for (auto& p : fastPeakUp_)
             p = SampleType(0);
+        for (int ch = 0; ch < kMaxChannels; ++ch) {
+            std::fill(std::begin(lookaheadBuf_[ch]), std::end(lookaheadBuf_[ch]),
+                      SampleType(0));
+            lookaheadWritePos_[ch] = 0;
+        }
     }
 
     // ── Detector configuration (applied to both detectors) ───────────────
@@ -74,6 +87,29 @@ class OttCompressor {
     void setUpSnapReleaseMs(SampleType ms)     { upStage.setSnapReleaseMs(ms); }
     void setUpSnapReleaseEnabled(bool enabled) { upStage.setSnapReleaseEnabled(enabled); }
 
+    // ── Lookahead control ────────────────────────────────────────────────
+
+    void setLookaheadEnabled(bool enabled) {
+        if (enabled != lookaheadEnabled_) {
+            lookaheadEnabled_ = enabled;
+            // Flush delay line on toggle to avoid clicks
+            for (int ch = 0; ch < kMaxChannels; ++ch) {
+                std::fill(std::begin(lookaheadBuf_[ch]), std::end(lookaheadBuf_[ch]),
+                          SampleType(0));
+                lookaheadWritePos_[ch] = 0;
+            }
+        }
+    }
+
+    void setLookaheadMs(SampleType ms) {
+        const int newDelay = static_cast<int>(ms * currentSampleRate_ / SampleType(1000));
+        lookaheadDelaySamples_ = juce::jlimit(0, kMaxLookaheadSamples - 1, newDelay);
+    }
+
+    int getLookaheadSamples() const {
+        return lookaheadEnabled_ ? lookaheadDelaySamples_ : 0;
+    }
+
     // ── Per-sample processing ────────────────────────────────────────────
 
     SampleType processSample(int channel, SampleType input) {
@@ -91,26 +127,33 @@ class OttCompressor {
     };
 
     Result processSampleWithGR(int channel, SampleType input) {
-        // Stage 1: upward compression on raw input (classic OTT order).
-        // Quiet signals get boosted first.
-        //
-        // Transient protection via a fast peak-follower (5 ms decay, instant rise):
-        // the peak envelope tracks any above-threshold transient immediately but
-        // decays smoothly — unlike a raw per-sample abs(), which collapses to -inf
-        // at every zero crossing and causes the boost envelope to chase carrier-
-        // frequency noise, producing audible "wiggle" and display spikes.
-        const auto envUp = detectorUp.processSample(channel, input);
+        // ── Lookahead delay: push input, read delayed sample ─────────────────
+        SampleType audioInput = input; // what goes into the gain stage
+        if (lookaheadEnabled_ && lookaheadDelaySamples_ > 0) {
+            // Write current sample into ring buffer
+            lookaheadBuf_[channel][lookaheadWritePos_[channel]] = input;
+            // Read the sample that was written lookaheadDelaySamples_ ago
+            const int readPos = (lookaheadWritePos_[channel]
+                                 - lookaheadDelaySamples_
+                                 + kMaxLookaheadSamples) % kMaxLookaheadSamples;
+            audioInput = lookaheadBuf_[channel][readPos];
+            lookaheadWritePos_[channel] =
+                (lookaheadWritePos_[channel] + 1) % kMaxLookaheadSamples;
+        }
+
+        // Stage 1: upward compression.
+        // Detector and fast peak-follower run on UNDELAYED 'input' (look-ahead benefit).
+        // Gain is applied to DELAYED 'audioInput'.
+        const auto envUp = detectorUp.processSample(channel, input);   // undelayed
         const SampleType envDbUp = envUp.db;
-        const SampleType absInput = std::abs(input);
+        const SampleType absInput = std::abs(input);                    // undelayed
         fastPeakUp_[channel] = std::max(absInput, fastPeakUp_[channel] * fastPeakDecay_);
         const SampleType levelForUp = std::max(envDbUp, linearToDb(fastPeakUp_[channel]));
-        const auto upResult          = upStage.processSample(channel, levelForUp);
-        const SampleType upGain      = dbToLinear(upResult.gainDb);
-        const SampleType intermediate = input * upGain;
+        const auto upResult         = upStage.processSample(channel, levelForUp);
+        const SampleType upGain     = dbToLinear(upResult.gainDb);
+        const SampleType intermediate = audioInput * upGain;            // delayed audio
 
         // Stage 2: downward compression on the upward-boosted signal.
-        // Acts as a natural ceiling — tames anything the upward stage pushed up,
-        // making the chain self-regulating.
         const auto envDown = detectorDown.processSample(channel, intermediate);
         const SampleType envDbDown = envDown.db;
         const auto downResult      = downStage.processSample(channel, envDbDown);
@@ -155,6 +198,16 @@ class OttCompressor {
     }
 
     static constexpr int kMaxChannels = 2;
+
+    // Lookahead delay-line ring buffers (pre-allocated for kMaxLookaheadMs)
+    static constexpr int kMaxLookaheadSamples =
+        static_cast<int>(kMaxLookaheadMs * kMaxSampleRate / 1000.0) + 1;
+
+    SampleType lookaheadBuf_[kMaxChannels][kMaxLookaheadSamples] = {};
+    int        lookaheadWritePos_[kMaxChannels]                   = {};
+    int        lookaheadDelaySamples_                             = 0;
+    bool       lookaheadEnabled_                                  = false;
+    SampleType currentSampleRate_                                 = SampleType(44100);
 
     VolumeDetector<SampleType>  detectorDown { SampleType(kDetectorMaxWindowMs) };
     VolumeDetector<SampleType>  detectorUp   { SampleType(kDetectorMaxWindowMs) };
