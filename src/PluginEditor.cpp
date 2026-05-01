@@ -361,12 +361,10 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Upward group (4 sliders + snap toggle + [snap slider] + lookahead toggle + [lookahead slider + latency label] + detector toggle) ──
+    // ── Upward group: thresh + ratio + attack + release + snapToggle + [snapSlider] + lookaheadToggle + [lookaheadSlider + latencyLabel] + detectorToggle ──
     const bool snapEnabled = upSnapReleaseEnabledToggle.getToggleState();
     const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
-    int upRows = 6; // thresh + ratio + attack + release + snapToggle + lookaheadToggle + detectorToggle = base 7, minus 1 (detectorToggle counted separately)
-    // base rows: thresh, ratio, attack, release, snapToggle, lookaheadToggle, detectorToggle = 7
-    upRows = 7;
+    int upRows = 7; // base: thresh, ratio, attack, release, snapToggle, lookaheadToggle, detectorToggle
     if (snapEnabled)  upRows += 1; // snap release slider
     if (lookaheadOn)  upRows += 2; // lookahead slider + latency label
     auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(upRows));
