@@ -71,6 +71,15 @@ class CompressorStage {
         updateCoefficients();
     }
 
+    void setSnapReleaseMs(SampleType ms) {
+        snapReleaseMs    = ms;
+        snapReleaseCoeff = msToCoeff(snapReleaseMs);
+    }
+
+    void setSnapReleaseEnabled(bool enabled) {
+        snapReleaseEnabled = enabled;
+    }
+
     // ── Per-sample processing ────────────────────────────────────────────
 
     struct Result {
@@ -107,7 +116,21 @@ class CompressorStage {
         const bool attacking = (direction == StageDirection::Downward)
                                    ? (targetGainDb < gainEnvelope)
                                    : (targetGainDb > gainEnvelope);
-        const SampleType coeff = attacking ? attackCoeff : releaseCoeff;
+
+        SampleType coeff;
+        if (!attacking) {
+            // Releasing — choose snap or normal
+            if (direction == StageDirection::Upward
+                && snapReleaseEnabled
+                && (gainEnvelope - targetGainDb) > kSnapReleaseThresholdDb)
+            {
+                coeff = snapReleaseCoeff;
+            } else {
+                coeff = releaseCoeff;
+            }
+        } else {
+            coeff = attackCoeff;
+        }
         gainEnvelope = targetGainDb + coeff * (gainEnvelope - targetGainDb);
 
         return { gainEnvelope, std::abs(gainEnvelope) };
@@ -121,8 +144,9 @@ class CompressorStage {
     }
 
     void updateCoefficients() {
-        attackCoeff  = msToCoeff(attackMs);
-        releaseCoeff = msToCoeff(releaseMs);
+        attackCoeff      = msToCoeff(attackMs);
+        releaseCoeff     = msToCoeff(releaseMs);
+        snapReleaseCoeff = msToCoeff(snapReleaseMs);
     }
 
     // ── Constants ────────────────────────────────────────────────────────
@@ -131,6 +155,11 @@ class CompressorStage {
     // Prevents boosting quantization/circuit noise and keeps max boost proportional
     // to threshold, making the display and audio behaviour predictable.
     static constexpr SampleType kUpwardFloorDb = SampleType(-80);
+
+    // Minimum gain-envelope drop (dB) required to trigger snap release.
+    // Detects a silence-to-transient event: the upward boost built up during silence
+    // collapses instantly when the target drops by more than this amount.
+    static constexpr SampleType kSnapReleaseThresholdDb = SampleType(6.0);
 
     // ── State ────────────────────────────────────────────────────────────
 
@@ -145,6 +174,9 @@ class CompressorStage {
 
     SampleType attackCoeff   { SampleType(0) };
     SampleType releaseCoeff  { SampleType(0) };
+    SampleType snapReleaseMs    { SampleType(5) };
+    SampleType snapReleaseCoeff { SampleType(0) };
+    bool       snapReleaseEnabled { false };
 
     SampleType gainEnv[kMaxChannels] = {};
 };

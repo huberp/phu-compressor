@@ -15,6 +15,8 @@ PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
     downReleasePtr = apvts.getRawParameterValue(kParamDownRelease);
     upAttackPtr = apvts.getRawParameterValue(kParamUpAttack);
     upReleasePtr = apvts.getRawParameterValue(kParamUpRelease);
+    upSnapReleasePtr        = apvts.getRawParameterValue(kParamUpSnapRelease);
+    upSnapReleaseEnabledPtr = apvts.getRawParameterValue(kParamUpSnapReleaseEnabled);
 
     detectorTypePtr = apvts.getRawParameterValue(kParamDetectorType);
     rmsWindowMsPtr  = apvts.getRawParameterValue(kParamRmsWindowMs);
@@ -75,6 +77,8 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     compressor.setDownReleaseMs(downReleasePtr->load());
     compressor.setUpAttackMs(upAttackPtr->load());
     compressor.setUpReleaseMs(upReleasePtr->load());
+    compressor.setUpSnapReleaseMs(upSnapReleasePtr->load());
+    compressor.setUpSnapReleaseEnabled(upSnapReleaseEnabledPtr->load() >= 0.5f);
 
     // Detector configuration
     const int detType = static_cast<int>(detectorTypePtr->load());
@@ -315,6 +319,15 @@ PhuCompressorAudioProcessor::createParameterLayout() {
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamUpRelease, 1}, "Up Release (ms)",
         juce::NormalisableRange<float>(0.1f, 2000.0f, 0.01f, 0.5f), 25.0f));
+
+    // Up Snap Release enabled: default off
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{kParamUpSnapReleaseEnabled, 1}, "Up Snap Release On", false));
+
+    // Up Snap Release time: 0.5 ms to 50 ms, default 5 ms
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kParamUpSnapRelease, 1}, "Up Snap Release (ms)",
+        juce::NormalisableRange<float>(0.5f, 50.0f, 0.1f, 0.5f), 5.0f));
 
     // ── Detector parameters ──────────────────────────────────────────────
 

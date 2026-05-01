@@ -83,6 +83,10 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     static constexpr const char* kParamUpAttack = "up_attack_ms";
     static constexpr const char* kParamUpRelease = "up_release_ms";
 
+    // Parameter IDs — snap release (2 new)
+    static constexpr const char* kParamUpSnapRelease        = "up_snap_release";
+    static constexpr const char* kParamUpSnapReleaseEnabled = "up_snap_release_enabled";
+
     // Parameter IDs — detector (5 new)
     static constexpr const char* kParamDetectorType = "detector_type";
     static constexpr const char* kParamRmsWindowMs  = "rms_window_ms";
@@ -110,6 +114,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     std::atomic<float>* downReleasePtr{nullptr};
     std::atomic<float>* upAttackPtr{nullptr};
     std::atomic<float>* upReleasePtr{nullptr};
+    std::atomic<float>* upSnapReleasePtr        {nullptr};
+    std::atomic<float>* upSnapReleaseEnabledPtr {nullptr};
 
     // Detector parameter pointers
     std::atomic<float>* detectorTypePtr{nullptr};
