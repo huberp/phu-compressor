@@ -71,6 +71,8 @@ class OttCompressor {
     void setUpRatio(SampleType r)          { upStage.setRatio(r); }
     void setUpAttackMs(SampleType ms)      { upStage.setAttackMs(ms); }
     void setUpReleaseMs(SampleType ms)     { upStage.setReleaseMs(ms); }
+    void setUpSnapReleaseMs(SampleType ms)     { upStage.setSnapReleaseMs(ms); }
+    void setUpSnapReleaseEnabled(bool enabled) { upStage.setSnapReleaseEnabled(enabled); }
 
     // ── Per-sample processing ────────────────────────────────────────────
 
