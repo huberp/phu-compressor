@@ -32,6 +32,11 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
                          upAttackSlider),
       upReleaseAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpRelease,
                           upReleaseSlider),
+      upSnapReleaseEnabledAttachment(p.getAPVTS(),
+                                     PhuCompressorAudioProcessor::kParamUpSnapReleaseEnabled,
+                                     upSnapReleaseEnabledToggle),
+      upSnapReleaseAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpSnapRelease,
+                              upSnapReleaseSlider),
       detectorTypeAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamDetectorType,
                              detectorTypeCombo),
       rmsWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsWindowMs,
@@ -50,6 +55,23 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
     setupSlider(upRatioSlider, upRatioLabel, "Ratio", this);
     setupSlider(upAttackSlider, upAttackLabel, "Attack (ms)", this);
     setupSlider(upReleaseSlider, upReleaseLabel, "Release (ms)", this);
+
+    // Snap release toggle
+    upSnapReleaseEnabledToggle.setButtonText("Snap Rel");
+    addAndMakeVisible(upSnapReleaseEnabledToggle);
+
+    // Snap release slider
+    setupSlider(upSnapReleaseSlider, upSnapReleaseLabel, "Snap Rel (ms)", this);
+
+    upSnapReleaseEnabledToggle.onClick = [this]() {
+        const bool snapOn = upSnapReleaseEnabledToggle.getToggleState();
+        upSnapReleaseSlider.setVisible(snapOn);
+        upSnapReleaseLabel.setVisible(snapOn);
+        resized();
+    };
+    // Initial visibility: hidden until toggle is on
+    upSnapReleaseSlider.setVisible(false);
+    upSnapReleaseLabel.setVisible(false);
 
     // Detector type combo
     detectorTypeLabel.setText("Type", juce::dontSendNotification);
@@ -281,8 +303,10 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Upward group (4 sliders + detector toggle = 5 rows) ─────────────────
-    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
+    // ── Upward group (4 sliders + snap toggle + [snap slider] + detector toggle) ──
+    const bool snapEnabled = upSnapReleaseEnabledToggle.getToggleState();
+    const int upRows = snapEnabled ? 7 : 6;
+    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(upRows));
     upwardGroup.setBounds(upGroupArea);
     {
         auto content = upGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -296,6 +320,13 @@ void PhuCompressorAudioProcessorEditor::resized() {
         layoutRow(upRatioLabel, upRatioSlider);
         layoutRow(upAttackLabel, upAttackSlider);
         layoutRow(upReleaseLabel, upReleaseSlider);
+        // Snap release toggle (always visible inside the group)
+        auto snapToggleRow = content.removeFromTop(kRowHeight);
+        upSnapReleaseEnabledToggle.setBounds(snapToggleRow);
+        content.removeFromTop(kRowGap);
+        // Snap release slider (visible only when enabled)
+        if (snapEnabled)
+            layoutRow(upSnapReleaseLabel, upSnapReleaseSlider);
         // Detector level toggle
         auto toggleRow = content.removeFromTop(kRowHeight);
         showUpDetectorToggle.setBounds(toggleRow);

@@ -71,6 +71,15 @@ class CompressorStage {
         updateCoefficients();
     }
 
+    void setSnapReleaseMs(SampleType ms) {
+        snapReleaseMs    = ms;
+        snapReleaseCoeff = msToCoeff(snapReleaseMs);
+    }
+
+    void setSnapReleaseEnabled(bool enabled) {
+        snapReleaseEnabled = enabled;
+    }
+
     // ── Per-sample processing ────────────────────────────────────────────
 
     struct Result {
@@ -107,7 +116,21 @@ class CompressorStage {
         const bool attacking = (direction == StageDirection::Downward)
                                    ? (targetGainDb < genv)
                                    : (targetGainDb > genv);
-        const SampleType coeff = attacking ? attackCoeff : releaseCoeff;
+
+        SampleType coeff;
+        if (!attacking) {
+            // Releasing — choose snap or normal
+            if (direction == StageDirection::Upward
+                && snapReleaseEnabled
+                && (genv - targetGainDb) > SampleType(6.0)) // >6 dB jump = transient arrived
+            {
+                coeff = snapReleaseCoeff;
+            } else {
+                coeff = releaseCoeff;
+            }
+        } else {
+            coeff = attackCoeff;
+        }
         genv = targetGainDb + coeff * (genv - targetGainDb);
 
         return { genv, std::abs(genv) };
@@ -121,8 +144,9 @@ class CompressorStage {
     }
 
     void updateCoefficients() {
-        attackCoeff  = msToCoeff(attackMs);
-        releaseCoeff = msToCoeff(releaseMs);
+        attackCoeff      = msToCoeff(attackMs);
+        releaseCoeff     = msToCoeff(releaseMs);
+        snapReleaseCoeff = msToCoeff(snapReleaseMs);
     }
 
     // ── Constants ────────────────────────────────────────────────────────
@@ -145,6 +169,9 @@ class CompressorStage {
 
     SampleType attackCoeff   { SampleType(0) };
     SampleType releaseCoeff  { SampleType(0) };
+    SampleType snapReleaseMs    { SampleType(5) };
+    SampleType snapReleaseCoeff { SampleType(0) };
+    bool       snapReleaseEnabled { false };
 
     SampleType gainEnv[kMaxChannels] = {};
 };
