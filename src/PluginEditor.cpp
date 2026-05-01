@@ -48,6 +48,11 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
                                      upSnapReleaseEnabledToggle),
       upSnapReleaseAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpSnapRelease,
                               upSnapReleaseSlider),
+      lookaheadEnabledAttachment(p.getAPVTS(),
+                                 PhuCompressorAudioProcessor::kParamLookaheadEnabled,
+                                 lookaheadEnabledToggle),
+      lookaheadMsAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamLookaheadMs,
+                            lookaheadMsSlider),
       detectorTypeAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamDetectorType,
                              detectorTypeCombo),
       rmsWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsWindowMs,
@@ -86,6 +91,36 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
         upSnapReleaseSlider.setVisible(snapOn);
         upSnapReleaseLabel.setVisible(snapOn);
     }
+
+    // Lookahead toggle
+    lookaheadEnabledToggle.setButtonText("Lookahead");
+    addAndMakeVisible(lookaheadEnabledToggle);
+
+    // Lookahead time slider
+    setupSlider(lookaheadMsSlider, lookaheadMsLabel, "Ahead (ms)", this);
+
+    // Lookahead latency readout label
+    lookaheadLatencyLabel.setJustificationType(juce::Justification::centredLeft);
+    lookaheadLatencyLabel.setFont(juce::FontOptions(kInfoLabelFontSize));
+    lookaheadLatencyLabel.setColour(juce::Label::textColourId,
+                                    juce::Colours::white.withAlpha(0.6f));
+    addAndMakeVisible(lookaheadLatencyLabel);
+
+    // Initial visibility: match the loaded parameter state
+    {
+        const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+        lookaheadMsSlider.setVisible(lookaheadOn);
+        lookaheadMsLabel.setVisible(lookaheadOn);
+        lookaheadLatencyLabel.setVisible(lookaheadOn);
+    }
+
+    lookaheadEnabledToggle.onClick = [this]() {
+        const bool on = lookaheadEnabledToggle.getToggleState();
+        lookaheadMsSlider.setVisible(on);
+        lookaheadMsLabel.setVisible(on);
+        lookaheadLatencyLabel.setVisible(on);
+        resized();
+    };
 
     // Detector type combo
     detectorTypeLabel.setText("Type", juce::dontSendNotification);
@@ -264,6 +299,15 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
             + juce::String(info.upMs, 1) + "/" + modeStr(info.upMode),
             juce::dontSendNotification);
     }
+
+    // Live lookahead latency readout
+    if (lookaheadEnabledToggle.getToggleState()) {
+        const int latSamples = audioProcessor.getLatencySamples();
+        const double sr = audioProcessor.getSyncGlobals().getSampleRate();
+        const float latMs = (sr > 0.0) ? static_cast<float>(latSamples / sr * 1000.0) : 0.0f;
+        lookaheadLatencyLabel.setText("Latency: " + juce::String(latMs, 1) + " ms",
+                                      juce::dontSendNotification);
+    }
 }
 
 void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
@@ -317,9 +361,12 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Upward group (4 sliders + snap toggle + [snap slider] + detector toggle) ──
+    // ── Upward group: thresh + ratio + attack + release + snapToggle + [snapSlider] + lookaheadToggle + [lookaheadSlider + latencyLabel] + detectorToggle ──
     const bool snapEnabled = upSnapReleaseEnabledToggle.getToggleState();
-    const int upRows = snapEnabled ? 7 : 6;
+    const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+    int upRows = 7; // base: thresh, ratio, attack, release, snapToggle, lookaheadToggle, detectorToggle
+    if (snapEnabled)  upRows += 1; // snap release slider
+    if (lookaheadOn)  upRows += 2; // lookahead slider + latency label
     auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(upRows));
     upwardGroup.setBounds(upGroupArea);
     {
@@ -341,6 +388,17 @@ void PhuCompressorAudioProcessorEditor::resized() {
         // Snap release slider (visible only when enabled)
         if (snapEnabled)
             layoutRow(upSnapReleaseLabel, upSnapReleaseSlider);
+        // Lookahead toggle (always visible inside the group)
+        auto lookaheadToggleRow = content.removeFromTop(kRowHeight);
+        lookaheadEnabledToggle.setBounds(lookaheadToggleRow);
+        content.removeFromTop(kRowGap);
+        // Lookahead slider + latency label (visible only when enabled)
+        if (lookaheadOn) {
+            layoutRow(lookaheadMsLabel, lookaheadMsSlider);
+            auto latRow = content.removeFromTop(kRowHeight);
+            lookaheadLatencyLabel.setBounds(latRow);
+            content.removeFromTop(kRowGap);
+        }
         // Detector level toggle
         auto toggleRow = content.removeFromTop(kRowHeight);
         showUpDetectorToggle.setBounds(toggleRow);

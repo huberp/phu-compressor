@@ -23,6 +23,9 @@ PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
     rmsSyncModePtr  = apvts.getRawParameterValue(kParamRmsSyncMode);
     rmsBeatDivPtr   = apvts.getRawParameterValue(kParamRmsBeatDiv);
     peakWindowMsPtr = apvts.getRawParameterValue(kParamPeakWindowMs);
+
+    lookaheadEnabledPtr = apvts.getRawParameterValue(kParamLookaheadEnabled);
+    lookaheadMsPtr      = apvts.getRawParameterValue(kParamLookaheadMs);
 }
 
 PhuCompressorAudioProcessor::~PhuCompressorAudioProcessor() {
@@ -79,6 +82,15 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     compressor.setUpReleaseMs(upReleasePtr->load());
     compressor.setUpSnapReleaseMs(upSnapReleasePtr->load());
     compressor.setUpSnapReleaseEnabled(upSnapReleaseEnabledPtr->load() >= 0.5f);
+
+    // Lookahead configuration
+    const bool lookaheadEnabled = lookaheadEnabledPtr->load() >= 0.5f;
+    const float lookaheadMs     = lookaheadMsPtr->load();
+    compressor.setLookaheadEnabled(lookaheadEnabled);
+    compressor.setLookaheadMs(lookaheadMs);
+
+    // Notify the host whenever latency changes
+    setLatencySamples(compressor.getLookaheadSamples());
 
     // Detector configuration
     const int detType = static_cast<int>(detectorTypePtr->load());
@@ -328,6 +340,15 @@ PhuCompressorAudioProcessor::createParameterLayout() {
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamUpSnapRelease, 1}, "Up Snap Release (ms)",
         juce::NormalisableRange<float>(0.5f, 50.0f, 0.1f, 0.5f), 5.0f));
+
+    // Lookahead enabled: default off
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{kParamLookaheadEnabled, 1}, "Lookahead On", false));
+
+    // Lookahead time: 0.5 ms to 20 ms, default 3 ms
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kParamLookaheadMs, 1}, "Lookahead (ms)",
+        juce::NormalisableRange<float>(0.5f, 20.0f, 0.1f, 0.5f), 3.0f));
 
     // ── Detector parameters ──────────────────────────────────────────────
 

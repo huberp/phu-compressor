@@ -37,6 +37,12 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::Slider       upSnapReleaseSlider;
     juce::Label        upSnapReleaseLabel;
 
+    // Lookahead controls
+    juce::ToggleButton lookaheadEnabledToggle;
+    juce::Slider       lookaheadMsSlider;
+    juce::Label        lookaheadMsLabel;
+    juce::Label        lookaheadLatencyLabel;
+
     // Labels
     juce::Label downThreshLabel;
     juce::Label downRatioLabel;
@@ -86,6 +92,9 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     SliderAttachment upReleaseAttachment;
     ButtonAttachment upSnapReleaseEnabledAttachment;
     SliderAttachment upSnapReleaseAttachment;
+
+    ButtonAttachment lookaheadEnabledAttachment;
+    SliderAttachment lookaheadMsAttachment;
 
     ComboBoxAttachment detectorTypeAttachment;
     SliderAttachment rmsWindowAttachment;

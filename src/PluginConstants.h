@@ -26,6 +26,9 @@
 /// Highest supported sample rate (for buffer pre-allocation).
 static constexpr double kMaxSampleRate = 192000.0;
 
+/// Maximum lookahead time in milliseconds (determines delay-line buffer size).
+static constexpr double kMaxLookaheadMs = 20.0;
+
 /// Lowest supported tempo — determines maximum detector window length.
 static constexpr double kMinBPM = 40.0;
 
