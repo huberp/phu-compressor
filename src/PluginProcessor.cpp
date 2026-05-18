@@ -186,12 +186,13 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         const double bpm = m_syncGlobals.getBPM();
         const double blockPpq = m_syncGlobals.getPpqBlockStart();
         const double displayRange = m_displayRangeBeats.load(std::memory_order_relaxed);
+        const double barPhaseOffsetPpq = m_syncGlobals.getBarPhaseOffsetPpq();
 
         if (bpm > 0.0 && displayRange > 0.0) {
             const double ppqPerSample = bpm / (60.0 * getSampleRate());
             for (int i = 0; i < numSamples; ++i) {
                 const double ppq_i = blockPpq + i * ppqPerSample;
-                double normPos = std::fmod(ppq_i, displayRange) / displayRange;
+                double normPos = std::fmod(ppq_i - barPhaseOffsetPpq, displayRange) / displayRange;
                 if (normPos < 0.0) normPos += 1.0;
 
                 // Input: stereo → mono → abs → dB

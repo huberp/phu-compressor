@@ -66,7 +66,7 @@ CompressorDisplay::CompressorDisplay(juce::AudioProcessorValueTreeState& apvtsRe
         timeButtons[static_cast<size_t>(i)].onClick = [this, i]() {
             selectedTimeIndex = i;
             if (beatSyncMode) {
-                displayRangeBeats = static_cast<double>(kDisplayBeatFractions[i]);
+                displayRangeBeats = getSelectedBeatSyncRangePpq();
                 resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayRangeBeats);
                 resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
             } else {
@@ -107,19 +107,47 @@ void CompressorDisplay::setBPM(double bpm) {
     }
 }
 
+void CompressorDisplay::setTimeSignature(int numerator, int denominator, double lastBarStartPpq) {
+    timeSigNumerator = juce::jmax(1, numerator);
+    timeSigDenominator = juce::jmax(1, denominator);
+    beatLengthPpq = 4.0 / static_cast<double>(timeSigDenominator);
+    barLengthPpq = beatLengthPpq * static_cast<double>(timeSigNumerator);
+    if (barLengthPpq > 0.0) {
+        barPhaseOffsetPpq = std::fmod(lastBarStartPpq, barLengthPpq);
+        if (barPhaseOffsetPpq < 0.0)
+            barPhaseOffsetPpq += barLengthPpq;
+    } else {
+        barPhaseOffsetPpq = 0.0;
+    }
+
+    if (beatSyncMode) {
+        displayRangeBeats = getSelectedBeatSyncRangePpq();
+        resizeDetDisplayChannel(m_detDisplay, currentBPM, sampleRate, displayRangeBeats);
+        resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
+    } else {
+        updateDisplayDurationFromBPM();
+    }
+}
+
 void CompressorDisplay::setDisplayDuration(float durationMs) {
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, durationMs);
 }
 
+double CompressorDisplay::getSelectedBeatSyncRangePpq() const {
+    const double displayBeats = static_cast<double>(
+        kDisplayBeatFractions[static_cast<size_t>(selectedTimeIndex)]);
+    return displayBeats * beatLengthPpq;
+}
+
 void CompressorDisplay::updateDisplayDurationFromBPM() {
-    float beatFraction = kDisplayBeatFractions[static_cast<size_t>(selectedTimeIndex)];
+    const double displayRangePpq = getSelectedBeatSyncRangePpq();
     if (currentBPM > 0.0) {
         displayDurationMs = static_cast<float>(
-            (static_cast<double>(beatFraction) / currentBPM) * 60000.0);
+            (displayRangePpq / currentBPM) * 60000.0);
     } else {
         // Fallback: assume 120 BPM
         displayDurationMs = static_cast<float>(
-            (static_cast<double>(beatFraction) / 120.0) * 60000.0);
+            (displayRangePpq / 120.0) * 60000.0);
     }
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, displayDurationMs);
 }
@@ -130,7 +158,7 @@ void CompressorDisplay::setBeatSyncMode(bool enabled) {
 
     // Both modes use the same time buttons/labels — just update displayRangeBeats
     if (beatSyncMode) {
-        displayRangeBeats = static_cast<double>(kDisplayBeatFractions[selectedTimeIndex]);
+        displayRangeBeats = getSelectedBeatSyncRangePpq();
         resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayRangeBeats);
         resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
     } else {
@@ -869,7 +897,7 @@ void CompressorDisplay::insertPacketToChannel(RmsDisplayChannel& ch,
                                           packet.data, packet.data, count);
 
     const phu::audio::WriteResult result =
-        ch.rmsRing.insert(packet.startPpq, m_rmsSquaredTemp.data(), count);
+        ch.rmsRing.insert(packet.startPpq - barPhaseOffsetPpq, m_rmsSquaredTemp.data(), count);
     ch.bucketSet.setDirty(result);
 }
 
@@ -1077,31 +1105,39 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
 
 void CompressorDisplay::paintBeatGrid(juce::Graphics& g,
                                        const juce::Rectangle<int>& area) {
-    if (displayRangeBeats <= 0.0)
+    if (displayRangeBeats <= 0.0 || beatLengthPpq <= 0.0)
         return;
 
-    const int totalBeats = static_cast<int>(displayRangeBeats);
-    g.setColour(kGridColour);
+    const int totalBeats = juce::jmax(1, static_cast<int>(std::round(displayRangeBeats / beatLengthPpq)));
+    const int beatsPerBar = juce::jmax(1, timeSigNumerator);
+    const double barLength = beatLengthPpq * static_cast<double>(beatsPerBar);
+
     g.setFont(juce::FontOptions(8.0f));
 
     for (int beat = 1; beat < totalBeats; ++beat) {
         float normX = static_cast<float>(beat) / static_cast<float>(totalBeats);
         int x = area.getX() + static_cast<int>(normX * area.getWidth());
-        // Heavier line at bar boundaries (every 4 beats)
-        if (beat % 4 == 0)
+        const bool isBarBoundary = (beat % beatsPerBar == 0);
+
+        if (isBarBoundary)
             g.setColour(kGridColour.brighter(0.3f));
         else
             g.setColour(kGridColour);
         g.drawVerticalLine(x, static_cast<float>(area.getY()),
                            static_cast<float>(area.getBottom()));
 
-        // Bar number at bar boundaries
-        if (beat % 4 == 0) {
+        if (isBarBoundary) {
             g.setColour(kGridTextColour);
-            g.drawText(juce::String(beat / 4 + 1),
+            g.drawText(juce::String(beat / beatsPerBar + 1),
                        x - 8, area.getBottom() - 14, 16, 12,
                        juce::Justification::centred);
         }
+    }
+
+    if (barLength > 0.0) {
+        g.setColour(kGridTextColour);
+        g.drawText(juce::String(timeSigNumerator) + "/" + juce::String(timeSigDenominator),
+                   area.getX() + 4, area.getY() + 2, 32, 10, juce::Justification::left);
     }
 }
 
@@ -1110,11 +1146,11 @@ void CompressorDisplay::paintBeatGrid(juce::Graphics& g,
 // ─────────────────────────────────────────────────────────────────────────
 
 void CompressorDisplay::paintPlayheadCursor(juce::Graphics& g,
-                                             const juce::Rectangle<int>& area) {
+                                              const juce::Rectangle<int>& area) {
     if (displayRangeBeats <= 0.0)
         return;
 
-    double normPos = std::fmod(currentPpq, displayRangeBeats) / displayRangeBeats;
+    double normPos = std::fmod(currentPpq - barPhaseOffsetPpq, displayRangeBeats) / displayRangeBeats;
     if (normPos < 0.0) normPos += 1.0;
 
     int x = area.getX() + static_cast<int>(normPos * area.getWidth());

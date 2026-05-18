@@ -223,6 +223,9 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
                                         ? syncGlobals.getSampleRate()
                                         : 48000.0);
     compressorDisplay.setBPM(syncGlobals.getBPM());
+    compressorDisplay.setTimeSignature(syncGlobals.getTimeSigNumerator(),
+                                       syncGlobals.getTimeSigDenominator(),
+                                       syncGlobals.getLastBarStartPpq());
 
     // Beat-sync: pass PPQ and keep display range in sync with processor
     if (compressorDisplay.isBeatSyncMode()) {

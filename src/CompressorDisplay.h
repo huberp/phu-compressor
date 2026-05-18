@@ -45,6 +45,7 @@ class CompressorDisplay : public juce::Component,
 
     void setSampleRate(double sr);
     void setBPM(double bpm);
+    void setTimeSignature(int numerator, int denominator, double lastBarStartPpq);
     void setDisplayDuration(float durationMs);
 
     /** Toggle visibility of individual overlay curves. */
@@ -142,6 +143,11 @@ class CompressorDisplay : public juce::Component,
     const BeatSyncBuffer* upGrSyncBuf     = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
+    int timeSigNumerator = 4;
+    int timeSigDenominator = 4;
+    double beatLengthPpq = 1.0;
+    double barLengthPpq = 4.0;
+    double barPhaseOffsetPpq = 0.0;
 
     // --- Detector RMS ring buffer + bucket-set display channels ---
     struct RmsDisplayChannel {
@@ -193,6 +199,7 @@ class CompressorDisplay : public juce::Component,
     void paintPlayheadCursor(juce::Graphics& g, const juce::Rectangle<int>& area);
 
     // --- Time selector ---
+    double getSelectedBeatSyncRangePpq() const;
     void updateDisplayDurationFromBPM();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CompressorDisplay)
