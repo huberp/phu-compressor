@@ -4,6 +4,7 @@
 #include "SyncGlobalsListener.h"
 #include <atomic>
 #include <cstddef>
+#include <cmath>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace phu {
@@ -44,6 +45,12 @@ class SyncGlobals : public GlobalsEventSource {
     double bpm = 0.0;
     double msecPerBeat = 0.0;
     double samplesPerBeat = 0.0;
+    int timeSigNumerator = 4;
+    int timeSigDenominator = 4;
+    double beatLengthPpq = 1.0;
+    double barLengthPpq = 4.0;
+    double lastBarStartPpq = 0.0;
+    double barPhaseOffsetPpq = 0.0;
 
     // PPQ tracking — blockStartPpq is audio-thread only,
     // ppqEndOfBlock is atomically published for UI-thread reads.
@@ -65,6 +72,12 @@ class SyncGlobals : public GlobalsEventSource {
     double getBPM() const { return bpm; }
     double getSampleRate() const { return sampleRate; }
     bool isDawPlaying() const { return isPlaying; }
+    int getTimeSigNumerator() const { return timeSigNumerator; }
+    int getTimeSigDenominator() const { return timeSigDenominator; }
+    double getBeatLengthPpq() const { return beatLengthPpq; }
+    double getBarLengthPpq() const { return barLengthPpq; }
+    double getLastBarStartPpq() const { return lastBarStartPpq; }
+    double getBarPhaseOffsetPpq() const { return barPhaseOffsetPpq; }
 
     /** Audio-thread only: block-start PPQ set each processBlock by updateDAWGlobals. */
     double getPpqBlockStart() const { return blockStartPpq; }
@@ -122,6 +135,30 @@ class SyncGlobals : public GlobalsEventSource {
 
             if (auto ppqPos = positionInfo->getPpqPosition())
                 blockStartPpq = *ppqPos;
+
+            if (auto sig = positionInfo->getTimeSignature()) {
+                const int newNumerator = juce::jmax(1, sig->numerator);
+                const int newDenominator = juce::jmax(1, sig->denominator);
+                timeSigNumerator = newNumerator;
+                timeSigDenominator = newDenominator;
+                beatLengthPpq = 4.0 / static_cast<double>(timeSigDenominator);
+                barLengthPpq = beatLengthPpq * static_cast<double>(timeSigNumerator);
+            }
+
+            if (auto lastBarStart = positionInfo->getPpqPositionOfLastBarStart()) {
+                lastBarStartPpq = *lastBarStart;
+            } else if (auto ppqPos = positionInfo->getPpqPosition()) {
+                if (barLengthPpq > 0.0)
+                    lastBarStartPpq = std::floor(*ppqPos / barLengthPpq) * barLengthPpq;
+            }
+
+            if (barLengthPpq > 0.0) {
+                barPhaseOffsetPpq = std::fmod(lastBarStartPpq, barLengthPpq);
+                if (barPhaseOffsetPpq < 0.0)
+                    barPhaseOffsetPpq += barLengthPpq;
+            } else {
+                barPhaseOffsetPpq = 0.0;
+            }
 
             bool newIsPlaying = positionInfo->getIsPlaying();
             if (newIsPlaying != isPlaying) {
