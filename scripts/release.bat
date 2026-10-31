@@ -10,6 +10,11 @@
 :: Output:
 ::   dist\PHU-COMPRESSOR-windows-<version>.zip
 ::
+:: Local helper only. Official releases are built by GitHub Actions
+:: (.github\workflows\release.yml) when a v* tag is pushed or the Release
+:: workflow is run manually with a tag; it reuses the per-platform workflows
+:: (build-windows-vst3.yml, build-linux.yml, build-macos.yml).
+::
 :: Requirements:
 ::   - CMake 3.28+ on PATH
 ::   - PowerShell 5+ (included with Windows 10/11, used for zipping)

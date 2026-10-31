@@ -40,7 +40,7 @@ phu-compressor/
 │       ├── RmsPacketFifo.h          PPQ-anchored detector level packets
 │       ├── PpqRingBuffer.h          PPQ-indexed ring buffer helper
 │       └── PacketFifo.h             Generic lock-free packet FIFO
-├── .github/workflows/               CI build + pluginval + release workflows
+├── .github/workflows/               CI: build.yml, release.yml + reusable per-platform build-*.yml, generate-pdf.yml
 └── scripts/
     ├── build.bat                    Windows convenience build script
     ├── release.bat                  Windows release packaging script
@@ -56,6 +56,15 @@ JUCE and phu-audio-lib are downloaded automatically by CMake during the first co
 Presets follow `<os>-<arch>-<format>-<config>` (macOS omits the format and builds VST3 + AU); every configure preset has a matching `-build` preset. Examples: `windows-x64-vst3-release`, `linux-x64-vst3-release`, `macos-arm64-release`. See `cmake --list-presets=all` and the [README](README.md#building).
 
 Optional CMake options (see `cmake/compiler_flags.cmake`): `-DENABLE_STRICT_WARNINGS=ON` for strict compiler warnings, plus the `sanitizers` (Address + UB sanitizers) and `coverage` presets.
+
+---
+
+## CI / Releases
+
+- `build.yml` runs on pushes to `main`, pull requests and manual dispatch. It calls the reusable per-platform workflows `build-windows-vst3.yml` (x64, with pluginval), `build-linux.yml` (x64 and arm64) and `build-macos.yml` (arm64 and x64, VST3 + AU, with pluginval). Each reusable workflow takes the inputs `arch`, `run-pluginval`, `upload-artifact`, `artifact-name` and `ref-name`, and exposes a `validation-status` output.
+- `release.yml` reuses the same per-platform workflows to build and package Windows (x64, ARM64), Linux (x64) and macOS (arm64, x64), generates `README.pdf` via `generate-pdf.yml`, injects it into every zip and publishes the GitHub Release.
+- To release, either push a tag matching `v[0-9]*` (e.g. `v1.2.3`; a tag containing `-` such as `v1.2.3-rc1` is published as a pre-release), or run the **Release** workflow manually from the Actions tab. The manual run requires a `tag` input and creates and pushes that tag on the selected branch/commit if it does not exist yet.
+- Before opening a PR, run the matching preset locally (see [Building](#building)); CI uses exactly these presets.
 
 ---
 
