@@ -35,6 +35,10 @@ apt-get install -y \
     libxrandr-dev \
     libxrender-dev
 
+# JUCE GL dependenciey
+apt-get install -y \
+    libgl1-mesa-dev
+
 echo "✓ All required dependencies installed successfully!"
 echo ""
 echo "Note: This installs only the minimal dependencies required for this plugin."
