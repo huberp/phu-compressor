@@ -17,6 +17,11 @@ If builds timeout:
 - Ensure all dependencies are installed before attempting to build
 - The JUCE and phu-audio-lib fetch must complete (network access to GitHub is required on first configure)
 
+### CI and Releases
+
+- `.github/workflows/build.yml` (push to `main`, pull requests, manual) and `release.yml` call reusable per-platform workflows: `build-windows-vst3.yml`, `build-linux.yml`, `build-macos.yml` (inputs: `arch`, `run-pluginval`, `upload-artifact`, `artifact-name`, `ref-name`; output: `validation-status`). They build with the CMake presets, so keep preset names and workflow references in sync.
+- Releases: push a tag matching `v[0-9]*`, or run the Release workflow manually with the required `tag` input (the tag is created and pushed if missing). `generate-pdf.yml` turns `README.md` into `README.pdf`, which is added to every release zip.
+
 ### Documentation
 
 - Main README: [README.md](./README.md)

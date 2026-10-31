@@ -154,6 +154,12 @@ An ARM64 variant is available as `linux-arm64-vst3-release`.
 
 For a full Linux dependency walkthrough see [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md).
 
+### CI and releases
+
+GitHub Actions builds use the same CMake presets as above. Each platform has a reusable workflow in `.github/workflows/` (`build-windows-vst3.yml`, `build-linux.yml`, `build-macos.yml`) that configures, builds, optionally validates the VST3 with [pluginval](https://github.com/Tracktion/pluginval), and optionally packages and uploads the plugin. `build.yml` (push to `main`, pull requests, manual dispatch) and `release.yml` both call them.
+
+Releases are produced by `release.yml`, either by pushing a tag matching `v[0-9]*` (e.g. `git tag v1.2.3 && git push origin v1.2.3`) or by running the **Release** workflow manually from the Actions tab with the required `tag` input; a manual run creates and pushes the tag on the selected commit if it does not exist yet. The workflow builds Windows (x64, ARM64), Linux (x64) and macOS (arm64, x64; VST3 + AU) packages, generates `README.pdf` from this file (`generate-pdf.yml`), adds it to every zip and publishes the GitHub Release.
+
 ---
 
 ## Architecture
