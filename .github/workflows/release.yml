@@ -18,14 +18,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Configure CMake (x64)
-        run: cmake --preset vs2026-x64
+        run: cmake --preset windows-x64-vst3-release
 
       - name: Build Release
-        run: cmake --build --preset release
+        run: cmake --build --preset windows-x64-vst3-release-build
 
       - name: Validate VST3 with pluginval
         shell: pwsh
@@ -37,7 +35,7 @@ jobs:
           Expand-Archive -Path "pluginval.zip" -DestinationPath "pluginval" -Force
 
           $vst3 = Get-ChildItem -Recurse `
-            -Path "build/vs2026-x64/src/phu-compressor_artefacts/Release/VST3" `
+            -Path "build/windows-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3" `
             -Filter "*.vst3" -Directory | Select-Object -First 1 -ExpandProperty FullName
 
           Write-Host "Validating: $vst3"
@@ -52,7 +50,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path staging | Out-Null
 
           $vst3 = Get-ChildItem -Recurse `
-            -Path "build/vs2026-x64/src/phu-compressor_artefacts/Release/VST3" `
+            -Path "build/windows-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3" `
             -Filter "*.vst3" -Directory | Select-Object -First 1
 
           Copy-Item -Path $vst3.FullName -Destination "staging" -Recurse
@@ -74,14 +72,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Configure CMake (ARM64 cross-compile)
-        run: cmake -B build-arm64 -DCMAKE_BUILD_TYPE=Release -A ARM64
+        run: cmake --preset windows-arm64-vst3-release
 
       - name: Build Release
-        run: cmake --build build-arm64 --config Release
+        run: cmake --build --preset windows-arm64-vst3-release-build
 
       - name: Package VST3
         shell: pwsh
@@ -92,7 +88,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path staging | Out-Null
 
           $vst3 = Get-ChildItem -Recurse `
-            -Path "build-arm64" `
+            -Path "build/windows-arm64-vst3-release" `
             -Filter "*.vst3" -Directory | Select-Object -First 1
 
           Copy-Item -Path $vst3.FullName -Destination "staging" -Recurse
@@ -114,17 +110,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Dependencies
         run: sudo bash scripts/install-linux-deps.sh
 
       - name: Configure CMake
-        run: cmake --preset linux-release
+        run: cmake --preset linux-x64-vst3-release
 
       - name: Build
-        run: cmake --build --preset linux-build
+        run: cmake --build --preset linux-x64-vst3-release-build
 
       - name: Package VST3
         run: |
@@ -133,7 +127,7 @@ jobs:
           ZIP_NAME="PHU-COMPRESSOR-linux-${VERSION}.zip"
           mkdir -p dist
 
-          VST3_PATH=$(find build/linux-release/src/phu-compressor_artefacts/Release/VST3 \
+          VST3_PATH=$(find build/linux-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3 \
             -name "*.vst3" -type d | head -n 1)
 
           if [ -z "$VST3_PATH" ]; then

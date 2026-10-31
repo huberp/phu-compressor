@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](#building)
 [![Format](https://img.shields.io/badge/format-VST3-purple.svg)](#building)
-[![JUCE](https://img.shields.io/badge/JUCE-8.0.12-orange.svg)](https://juce.com)
+[![JUCE](https://img.shields.io/badge/JUCE-9.0.0-orange.svg)](https://juce.com)
 [![Coffee](https://img.shields.io/badge/By%20me%20a%20Coffee-purple.svg)](https://ko-fi.com/phuplugins)
 
 A VST3 single-band OTT-style compressor combining upward and downward compression in a single plugin. An interactive transfer curve and a beat-synced rolling waveform display show both gain stages and their detector levels simultaneously, making it easy to see exactly what is happening to the dynamic range.
@@ -100,38 +100,57 @@ A VST3 single-band OTT-style compressor combining upward and downward compressio
 
 | Tool | Minimum version |
 |---|---|
-| CMake | 3.15 |
-| C++ compiler | C++17 — MSVC 2022, GCC 11, or Clang 14 |
-| JUCE | 8.0.12 (included as git submodule) |
+| CMake | 3.28 |
+| C++ compiler | C++20 — MSVC 2022 or newer (Visual Studio 2026 generator in the Windows presets), GCC 11, or Clang 14 |
+| JUCE | 9.0.0 (fetched by CMake into `JUCE/`) |
+| phu-audio-lib | `main` (fetched by CMake into `phu-audio-lib/`) |
 
 ### Clone
+
+JUCE and phu-audio-lib are downloaded automatically during the first CMake configure (network access to GitHub required). There are no submodules to initialise.
 
 ```bash
 git clone https://github.com/huberp/phu-compressor.git
 cd phu-compressor
-git submodule update --init --recursive
 ```
 
 ### Windows
 
 ```bash
-cmake --preset vs2026-x64
-cmake --build --preset release
+cmake --preset windows-x64-vst3-release
+cmake --build --preset windows-x64-vst3-release-build
 ```
 
-Output: `build/vs2026-x64/src/phu-compressor_artefacts/Release/VST3/`
+Output: `build/windows-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3/`
+
+Other presets: `windows-x64-vst3-debug` (with `-build`), and `windows-arm64-vst3-release` (ARM64 cross-compile, with `-build`).
+
+### macOS
+
+```bash
+cmake --preset macos-arm64-release
+cmake --build --preset macos-arm64-release-build
+```
+
+Use `macos-x64-release` / `macos-x64-release-build` on Intel Macs. Both formats (VST3 + AU) are built.
+
+Output: `build/macos-arm64-release/src/phu-compressor_artefacts/Release/{VST3,AU}/`
+
+Single-format builds: `macos-arm64-release-build-vst3` / `macos-arm64-release-build-au` (same configure preset).
 
 ### Linux
 
 ```bash
 sudo bash scripts/install-linux-deps.sh
-cmake --preset linux-release
-cmake --build --preset linux-build
+cmake --preset linux-x64-vst3-release
+cmake --build --preset linux-x64-vst3-release-build
 ```
 
-If the build times out: `cmake --build --preset linux-build -j2`
+If the build times out: `cmake --build --preset linux-x64-vst3-release-build -j2`
 
-Output: `build/linux-release/src/phu-compressor_artefacts/VST3/`
+Output: `build/linux-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3/`
+
+An ARM64 variant is available as `linux-arm64-vst3-release`.
 
 For a full Linux dependency walkthrough see [docs/LINUX_BUILD.md](docs/LINUX_BUILD.md).
 

@@ -7,22 +7,24 @@
 ::   scripts\build.bat debug        (Debug)
 ::
 :: Output:
-::   build\vs2026-x64\src\phu-compressor_artefacts\<Config>\VST3\PHU COMPRESSOR.vst3
+::   build\windows-x64-vst3-<config>\src\phu-compressor_artefacts\<Config>\VST3\PHU COMPRESSOR.vst3
 ::
 :: Requirements:
-::   - CMake 3.23+ on PATH
-::   - Visual Studio 2022 (or 2026) with Desktop C++ workload installed
-::   - JUCE submodule initialised:  git submodule update --init --recursive
+::   - CMake 3.28+ on PATH
+::   - Visual Studio 2026 with Desktop C++ workload installed
+::   - Network access to GitHub on first configure (JUCE and phu-audio-lib
+::     are fetched by CMake)
 :: ---------------------------------------------------------------------------
 setlocal EnableExtensions EnableDelayedExpansion
 
 :: ---- Parse optional argument -----------------------------------------------
 set "CONFIG=Release"
-set "BUILD_PRESET=release"
+set "PRESET=windows-x64-vst3-release"
 if /I "%~1"=="debug" (
     set "CONFIG=Debug"
-    set "BUILD_PRESET=debug"
+    set "PRESET=windows-x64-vst3-debug"
 )
+set "BUILD_PRESET=%PRESET%-build"
 
 echo.
 echo ============================================================
@@ -35,7 +37,7 @@ echo.
 where cmake >nul 2>&1
 if errorlevel 1 (
     echo ERROR: cmake not found on PATH.
-    echo Please install CMake 3.23+ and add it to your PATH.
+    echo Please install CMake 3.28+ and add it to your PATH.
     exit /b 1
 )
 for /f "tokens=3" %%v in ('cmake --version 2^>^&1 ^| findstr /r "cmake version"') do set "CMAKE_VER=%%v"
@@ -44,23 +46,11 @@ echo CMake version: %CMAKE_VER%
 :: ---- Navigate to repo root -------------------------------------------------
 pushd "%~dp0\.."
 
-:: ---- Check submodule -------------------------------------------------------
-if not exist "JUCE\CMakeLists.txt" (
-    echo.
-    echo WARNING: JUCE submodule appears uninitialised. Running:
-    echo   git submodule update --init --recursive
-    echo.
-    git submodule update --init --recursive
-    if errorlevel 1 (
-        echo ERROR: Failed to initialise JUCE submodule.
-        popd & exit /b 1
-    )
-)
-
 :: ---- Configure -------------------------------------------------------------
 echo.
-echo [1/2] Configuring (preset: vs2026-x64) ...
-cmake --preset vs2026-x64
+echo [1/2] Configuring (preset: %PRESET%) ...
+echo       (first configure fetches JUCE and phu-audio-lib - network required)
+cmake --preset %PRESET%
 if errorlevel 1 (
     echo.
     echo ERROR: CMake configuration failed.
@@ -79,7 +69,7 @@ if errorlevel 1 (
 
 :: ---- Locate output ---------------------------------------------------------
 echo.
-set "ARTEFACTS=build\vs2026-x64\src\phu-compressor_artefacts\%CONFIG%\VST3"
+set "ARTEFACTS=build\%PRESET%\src\phu-compressor_artefacts\%CONFIG%\VST3"
 for /d %%f in ("%ARTEFACTS%\*.vst3") do set "VST3_PATH=%%f"
 
 echo ============================================================

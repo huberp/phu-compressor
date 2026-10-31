@@ -3,6 +3,10 @@ build/
 cmake-build-*/
 _codeql_build_dir/
 
+# Fetched by CMake (FetchContent)
+JUCE/
+phu-audio-lib/
+
 # IDE directories
 .vs/
 .vscode/
