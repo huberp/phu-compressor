@@ -71,7 +71,7 @@ A VST3 single-band OTT-style compressor combining upward and downward compressio
 | Thresh (dB) | −60 … 0 dB | Level below which upward compression (boost) engages. |
 | Ratio | 1:1 … 20:1 | Upward expansion ratio below threshold. |
 | Attack (ms) | 0.1 … 500 ms | Time for the boost to engage. |
-| Release (ms) | 1 … 2000 ms | Time for the boost to release. |
+| Release (ms) | 0.1 … 2000 ms | Time for the boost to release. Default: 25 ms. |
 | Level | toggle | Show/hide the upward detector curve in the display. |
 
 **Detector group** — controls the level detector shared by both stages
@@ -148,9 +148,9 @@ For a full Linux dependency walkthrough see [docs/LINUX_BUILD.md](docs/LINUX_BUI
 | `VolumeDetector` | `src/VolumeDetector.h` | Rolling-window level detector (RMS or PeakMax). RMS uses a running sum for O(1) per sample. PeakMax tracks the max in the window and rescans on eviction. The ring buffer is pre-allocated at `prepare()` to `kDetectorMaxWindowMs` samples — no allocation on the audio thread. |
 | `CompressorDisplay` | `src/CompressorDisplay.h/cpp` | JUCE `Component` rendered at 60 Hz. Unified panel with: (1) a transfer curve with full-colour draggable threshold handles, (2) a rolling or beat-synced waveform showing input level and both GR overlays, and (3) a musical time selector. Pulls all data from lock-free FIFOs and `BeatSyncBuffer`s via `updateFromFifos()`. |
 | `BeatSyncBuffer` | `lib/audio/BeatSyncBuffer.h` | Position-indexed overwrite buffer. Each bin maps to a normalised beat position `[0, 1)`. Audio-thread writes via `write(normalizedPos, value)`; UI-thread reads via `data()`. Single float stores are naturally atomic on x86/x64. |
-| `AudioSampleFifo` | `lib/audio/AudioSampleFifo.h` | Lock-free SPSC FIFO for per-sample audio → UI transport. Used for input level and both gain-reduction streams. |
+| `AudioSampleFifo` | `phu-audio-lib/audio/AudioSampleFifo.h` | Lock-free SPSC FIFO for per-sample audio → UI transport. Used for input level and both gain-reduction streams. |
 | `RmsPacketFifo` | `lib/audio/RmsPacketFifo.h` | Lock-free FIFO carrying batched, PPQ-anchored detector level packets. Allows the display to draw detector curves with musical time alignment. |
-| `SyncGlobals` | `lib/events/SyncGlobals.h` | Holds current BPM, sample rate, and transport PPQ. Written on the audio thread; UI-thread reads `ppqEndOfBlock` via `std::atomic<double>`. |
+| `SyncGlobals` | `phu-audio-lib/events/SyncGlobals.h` | Holds current BPM, sample rate, and transport PPQ. Written on the audio thread; UI-thread reads `ppqEndOfBlock` via `std::atomic<double>`. |
 | `PluginProcessor` | `src/PluginProcessor.h/cpp` | `AudioProcessor` + APVTS. Owns all DSP, FIFOs, and `BeatSyncBuffer`s. APVTS raw parameter pointers are cached at construction for lock-free audio-thread reads. |
 
 ### DSP Signal Path

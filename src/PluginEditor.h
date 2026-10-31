@@ -2,6 +2,7 @@
 
 #include "CompressorDisplay.h"
 #include "PluginProcessor.h"
+#include "audio/BpmJitterPrevention.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
 class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -59,6 +60,12 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     juce::Label peakWindowLabel;
     juce::Label rmsInfoLabel;   // live window-ms / mode readout (RMS mode only)
 
+    // Lookahead controls
+    juce::ToggleButton lookaheadEnabledToggle;
+    juce::Slider       lookaheadMsSlider;
+    juce::Label        lookaheadMsLabel;
+    juce::Label        lookaheadLatencyLabel;
+
     // Curve visibility toggles
     juce::ToggleButton showDownDetectorToggle; // inside downward group
     juce::ToggleButton showUpDetectorToggle;   // inside upward group
@@ -92,6 +99,17 @@ class PhuCompressorAudioProcessorEditor : public juce::AudioProcessorEditor,
     ButtonAttachment rmsSyncAttachment;
     ComboBoxAttachment rmsBeatDivAttachment;
     SliderAttachment peakWindowAttachment;
+
+    ButtonAttachment lookaheadEnabledAttachment;
+    SliderAttachment lookaheadMsAttachment;
+
+    int computeDownwardGroupHeight()  const;
+    int computeUpwardGroupHeight()    const;
+    int computeDetectorGroupHeight()  const;
+    int computeRequiredEditorHeight() const;
+
+    /// Last BPM forwarded to CompressorDisplay; -1 sentinel forces refresh on first tick.
+    double m_lastBpm = -1.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessorEditor)
 };

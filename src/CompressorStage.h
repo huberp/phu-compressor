@@ -112,17 +112,17 @@ class CompressorStage {
         //
         // For Downward: magnitude grows when gain goes more negative → target < gainEnv
         // For Upward:   magnitude grows when gain goes more positive → target > gainEnv
-        SampleType& genv = gainEnv[channel];
+        SampleType& gainEnvelope = gainEnv[channel];
         const bool attacking = (direction == StageDirection::Downward)
-                                   ? (targetGainDb < genv)
-                                   : (targetGainDb > genv);
+                                   ? (targetGainDb < gainEnvelope)
+                                   : (targetGainDb > gainEnvelope);
 
         SampleType coeff;
         if (!attacking) {
             // Releasing — choose snap or normal
             if (direction == StageDirection::Upward
                 && snapReleaseEnabled
-                && (genv - targetGainDb) > kSnapReleaseThresholdDb)
+                && (gainEnvelope - targetGainDb) > kSnapReleaseThresholdDb)
             {
                 coeff = snapReleaseCoeff;
             } else {
@@ -131,9 +131,9 @@ class CompressorStage {
         } else {
             coeff = attackCoeff;
         }
-        genv = targetGainDb + coeff * (genv - targetGainDb);
+        gainEnvelope = targetGainDb + coeff * (gainEnvelope - targetGainDb);
 
-        return { genv, std::abs(genv) };
+        return { gainEnvelope, std::abs(gainEnvelope) };
     }
 
   private:

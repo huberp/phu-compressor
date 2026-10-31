@@ -32,6 +32,17 @@ static constexpr float kHandleHitRadius = 10.0f;
 // Matches the former BucketSet::kMaxRmsBuckets constant.
 static constexpr int kDetRmsBuckets = 512;
 
+// Half-width of the sliding-window average applied per pixel in both detector renderers.
+static constexpr int    kDetRmsRenderSmoothRadius = 3;
+
+// Milliseconds per minute — converts between beat fractions and display duration.
+static constexpr double kMsPerMinute = 60000.0;
+
+// Maximum ring-size delta (in samples) that is treated as BPM jitter and ignored.
+// ceil(displayBeats*60*sr/bpm) shifts by ~13 samples per 0.012 BPM at 100 BPM/48 kHz;
+// a genuine 1 BPM change produces ~1152 samples.  512 sits safely between the two.
+static constexpr int kRingSizeJitterTolerance = 512;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Construction / Destruction
 // ─────────────────────────────────────────────────────────────────────────
@@ -60,18 +71,18 @@ CompressorDisplay::CompressorDisplay(juce::AudioProcessorValueTreeState& apvtsRe
     for (int i = 0; i < kDisplayNumRanges; ++i) {
         timeButtons[static_cast<size_t>(i)].setButtonText(kDisplayBeatLabels[i]);
         timeButtons[static_cast<size_t>(i)].setClickingTogglesState(true);
-        timeButtons[static_cast<size_t>(i)].setRadioGroupId(1001);
+        timeButtons[static_cast<size_t>(i)].setRadioGroupId(kTimeButtonGroupId);
         timeButtons[static_cast<size_t>(i)].setToggleState(
             i == selectedTimeIndex, juce::dontSendNotification);
         timeButtons[static_cast<size_t>(i)].onClick = [this, i]() {
             selectedTimeIndex = i;
-            if (beatSyncMode) {
+            if (beatSyncMode)
                 displayRangeBeats = static_cast<double>(kDisplayBeatFractions[i]);
-                resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayRangeBeats);
-                resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
-            } else {
+            else
                 updateDisplayDurationFromBPM();
-            }
+            const double displayBeats = computeDetectorDisplayBeats();
+            resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayBeats);
+            resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayBeats);
         };
         addAndMakeVisible(timeButtons[static_cast<size_t>(i)]);
     }
@@ -89,26 +100,30 @@ CompressorDisplay::~CompressorDisplay() {
 // ─────────────────────────────────────────────────────────────────────────
 
 void CompressorDisplay::setSampleRate(double sr) {
-    if (sr > 0.0) {
-        sampleRate = sr;
-        if (beatSyncMode) {
-            resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayRangeBeats);
-            resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
-        }
-    }
+    if (sr <= 0.0) return;
+    sampleRate = sr;
+    const double displayBeats = computeDetectorDisplayBeats();
+    resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayBeats);
+    resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayBeats);
 }
 
 void CompressorDisplay::setBPM(double bpm) {
     currentBPM = bpm;
+    // updateDisplayDurationFromBPM must run first so displayDurationMs is current for
+    // computeDetectorDisplayBeats in non-beat-sync mode.
     updateDisplayDurationFromBPM();
-    if (beatSyncMode) {
-        resizeDetDisplayChannel(m_detDisplay,     bpm, sampleRate, displayRangeBeats);
-        resizeDetDisplayChannel(m_downDetDisplay, bpm, sampleRate, displayRangeBeats);
-    }
+    const double displayBeats = computeDetectorDisplayBeats();
+    resizeDetDisplayChannel(m_detDisplay,     bpm, sampleRate, displayBeats);
+    resizeDetDisplayChannel(m_downDetDisplay, bpm, sampleRate, displayBeats);
 }
 
 void CompressorDisplay::setDisplayDuration(float durationMs) {
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, durationMs);
+    if (!beatSyncMode) {
+        const double displayBeats = computeDetectorDisplayBeats();
+        resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayBeats);
+        resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayBeats);
+    }
 }
 
 void CompressorDisplay::updateDisplayDurationFromBPM() {
@@ -117,31 +132,40 @@ void CompressorDisplay::updateDisplayDurationFromBPM() {
         displayDurationMs = static_cast<float>(
             (static_cast<double>(beatFraction) / currentBPM) * 60000.0);
     } else {
-        // Fallback: assume 120 BPM
+        // Fallback: assume kFallbackBPM
         displayDurationMs = static_cast<float>(
-            (static_cast<double>(beatFraction) / 120.0) * 60000.0);
+            (static_cast<double>(beatFraction) / kFallbackBPM) * 60000.0);
     }
     displayDurationMs = juce::jlimit(10.0f, 4000.0f, displayDurationMs);
+}
+
+double CompressorDisplay::computeDetectorDisplayBeats() const {
+    if (beatSyncMode)
+        return displayRangeBeats;
+    const double bpm = (currentBPM > 0.0) ? currentBPM : kFallbackBPM;
+    return static_cast<double>(displayDurationMs) * bpm / kMsPerMinute;
 }
 
 void CompressorDisplay::setBeatSyncMode(bool enabled) {
     if (beatSyncMode == enabled) return;
     beatSyncMode = enabled;
 
-    // Both modes use the same time buttons/labels — just update displayRangeBeats
     if (beatSyncMode) {
         displayRangeBeats = static_cast<double>(kDisplayBeatFractions[selectedTimeIndex]);
-        resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayRangeBeats);
-        resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayRangeBeats);
     } else {
         updateDisplayDurationFromBPM();
     }
+    // Resize for the new active display range; computeDetectorDisplayBeats() accounts for
+    // both modes so the ring is always the right size when the renderer reads it.
+    const double displayBeats = computeDetectorDisplayBeats();
+    resizeDetDisplayChannel(m_detDisplay,     currentBPM, sampleRate, displayBeats);
+    resizeDetDisplayChannel(m_downDetDisplay, currentBPM, sampleRate, displayBeats);
     repaint();
 }
 
-void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBuffer& input,
-                                            const BeatSyncBuffer& downGr,
-                                            const BeatSyncBuffer& upGr) {
+void CompressorDisplay::setBeatSyncBuffers(const BeatSyncBufferF& input,
+                                            const BeatSyncBufferF& downGr,
+                                            const BeatSyncBufferF& upGr) {
     inputSyncBuf  = &input;
     downGrSyncBuf = &downGr;
     upGrSyncBuf   = &upGr;
@@ -210,7 +234,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float mono = (tempL[static_cast<size_t>(i)] + tempR[static_cast<size_t>(i)]) * 0.5f;
                 float absMono = std::abs(mono);
-                float db = (absMono > 1e-10f)
+                float db = (absMono > kLinearNoiseFloor)
                                ? 20.0f * std::log10(absMono)
                                : kMinDb;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
@@ -229,7 +253,7 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float gain = juce::jmin(tempL[static_cast<size_t>(i)],
                                         tempR[static_cast<size_t>(i)]);
-                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : -kGrMaxDb;
+                float db = (gain > kLinearNoiseFloor) ? 20.0f * std::log10(gain) : -kGrMaxDb;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(-kGrMaxDb, 0.0f, db);
             }
             appendToRing(downGrRing, tempL.data(), got);
@@ -246,45 +270,29 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
             for (int i = 0; i < got; ++i) {
                 float gain = juce::jmax(tempL[static_cast<size_t>(i)],
                                         tempR[static_cast<size_t>(i)]);
-                float db = (gain > 1e-10f) ? 20.0f * std::log10(gain) : 0.0f;
+                float db = (gain > kLinearNoiseFloor) ? 20.0f * std::log10(gain) : 0.0f;
                 tempL[static_cast<size_t>(i)] = juce::jlimit(0.0f, kGrMaxDb, db);
             }
             appendToRing(upGrRing, tempL.data(), got);
         }
     }
 
-    // Pull up-detector packets (mono RMS already computed on audio thread)
+    // Pull up-detector packets — always route to PPQ ring, regardless of display mode.
     {
         RmsPacket packet;
         while (detectorFifo.pull(packet)) {
-            if (beatSyncMode && m_detDisplay.rmsRing.workingSize() > 0)
+            if (m_detDisplay.rmsRing.workingSize() > 0)
                 insertPacketToChannel(m_detDisplay, packet);
-            else {
-                for (int i = 0; i < packet.count; ++i) {
-                    const float rms = packet.data[static_cast<size_t>(i)];
-                    const float db = (rms > 1.0e-10f) ? 20.0f * std::log10(rms) : kMinDb;
-                    tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
-                }
-                appendToRing(detectorRing, tempL.data(), packet.count);
-            }
         }
         computeDirtyBucketMeans(m_detDisplay);
     }
 
-    // Pull down-detector packets (mono RMS already computed on audio thread)
+    // Pull down-detector packets — always route to PPQ ring, regardless of display mode.
     {
         RmsPacket packet;
         while (downDetectorFifo.pull(packet)) {
-            if (beatSyncMode && m_downDetDisplay.rmsRing.workingSize() > 0)
+            if (m_downDetDisplay.rmsRing.workingSize() > 0)
                 insertPacketToChannel(m_downDetDisplay, packet);
-            else {
-                for (int i = 0; i < packet.count; ++i) {
-                    const float rms = packet.data[static_cast<size_t>(i)];
-                    const float db = (rms > 1.0e-10f) ? 20.0f * std::log10(rms) : kMinDb;
-                    tempL[static_cast<size_t>(i)] = juce::jlimit(kMinDb, kMaxDb, db);
-                }
-                appendToRing(downDetectorRing, tempL.data(), packet.count);
-            }
         }
         computeDirtyBucketMeans(m_downDetDisplay);
     }
@@ -296,24 +304,24 @@ void CompressorDisplay::updateFromFifos(AudioSampleFifo<2>& inputFifo,
 
 juce::Rectangle<int> CompressorDisplay::getTransferCurveArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
     // Make it square, limited by height
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24); // 24px for time bar
-    return bounds.removeFromLeft(side).withTrimmedBottom(24);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.removeFromLeft(side).withTrimmedBottom(kTimeBarHeight);
 }
 
 juce::Rectangle<int> CompressorDisplay::getWaveformArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24);
-    return bounds.withTrimmedLeft(side + 2).withTrimmedBottom(24); // 2px separator
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.withTrimmedLeft(side + kSeparatorWidth).withTrimmedBottom(kTimeBarHeight);
 }
 
 juce::Rectangle<int> CompressorDisplay::getTimeBarArea() const {
     auto bounds = getLocalBounds();
-    int tcWidth = static_cast<int>(bounds.getWidth() * 0.35f);
-    int side = juce::jmin(tcWidth, bounds.getHeight() - 24);
-    return bounds.withTrimmedLeft(side + 2).removeFromBottom(24);
+    int tcWidth = static_cast<int>(bounds.getWidth() * kTransferCurveWidthFraction);
+    int side = juce::jmin(tcWidth, bounds.getHeight() - kTimeBarHeight);
+    return bounds.withTrimmedLeft(side + kSeparatorWidth).removeFromBottom(kTimeBarHeight);
 }
 
 void CompressorDisplay::resized() {
@@ -353,7 +361,7 @@ void CompressorDisplay::paint(juce::Graphics& g) {
     } else {
         paintWaveform(g, wfArea);
         if (showUpDetectorCurve || showDownDetectorCurve)
-            paintDetectorCurve(g, wfArea);
+            paintScrollingDetectorFromRing(g, wfArea);
         if (showDownGr || showUpGr)
             paintGainReduction(g, wfArea);
     }
@@ -595,34 +603,48 @@ void CompressorDisplay::paintWaveform(juce::Graphics& g,
 // Detector Curve (overlaid on waveform)
 // ─────────────────────────────────────────────────────────────────────────
 
-void CompressorDisplay::paintDetectorCurve(juce::Graphics& g,
-                                            const juce::Rectangle<int>& area) {
-    const int displaySamples = juce::jmin(
-        static_cast<int>(sampleRate * static_cast<double>(displayDurationMs) / 1000.0),
-        kRingSize);
-
+void CompressorDisplay::paintScrollingDetectorFromRing(juce::Graphics& g,
+                                                        const juce::Rectangle<int>& area) {
     const int w = area.getWidth();
-    if (w <= 0 || displaySamples <= 0)
-        return;
+    if (w <= 0) return;
 
-    const float samplesPerPixel = static_cast<float>(displaySamples) / static_cast<float>(w);
-
-    // Helper: build a path from a paint buffer
-    auto buildPath = [&](const std::array<float, kRingSize>& buf) {
+    // Temporal read: px=0 is oldest (currentPpq - windowBeats), px=w-1 is newest (currentPpq).
+    // The ring is sized so that windowBeats == displayBeats (see computeDetectorDisplayBeats),
+    // meaning the full ring is always the display window, exactly as the old scrolling ring was.
+    auto buildDetPath = [&](const RmsDisplayChannel& ch) {
         juce::Path path;
+        const int bucketCount = ch.bucketSet.bucketCount();
+        if (bucketCount <= 0 || ch.paintValues.empty())
+            return path;
+
+        const double displayBeats = ch.rmsRing.displayBeats();
+        if (displayBeats <= 0.0)
+            return path;
+
+        const double windowBeats = displayBeats; // ring covers exactly the display window
+
         for (int px = 0; px < w; ++px) {
-            const int startSamp = static_cast<int>(static_cast<float>(px) * samplesPerPixel);
-            int endSamp = static_cast<int>(static_cast<float>(px + 1) * samplesPerPixel);
-            endSamp = juce::jmin(endSamp, displaySamples);
+            // Map pixel linearly from (currentPpq - windowBeats) to currentPpq.
+            const double t   = (w > 1) ? static_cast<double>(px) / static_cast<double>(w - 1) : 0.0;
+            const double ppq = (currentPpq - windowBeats) + t * windowBeats;
+
+            // Wrap into [0, displayBeats) — same modulo as PpqAddressedRingBuffer::indexForPpq.
+            double ppqMod = std::fmod(ppq, displayBeats);
+            if (ppqMod < 0.0) ppqMod += displayBeats;
+
+            int bi = juce::jlimit(0, bucketCount - 1,
+                static_cast<int>(ppqMod * static_cast<double>(bucketCount) / displayBeats));
+
+            // Average adjacent buckets (dB domain) — same smoothing as paintBeatSyncDetector.
+            const int biStart = juce::jmax(0, bi - kDetRmsRenderSmoothRadius);
+            const int biEnd   = juce::jmin(bucketCount - 1, bi + kDetRmsRenderSmoothRadius);
             float sum = 0.0f;
-            int count = 0;
-            for (int s = startSamp; s < endSamp; ++s) {
-                sum += buf[static_cast<size_t>(s)];
-                ++count;
-            }
-            float db   = (count > 0) ? sum / static_cast<float>(count) : kMinDb;
-            float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
-            float y    = area.getBottom() - norm * area.getHeight();
+            for (int sbi = biStart; sbi <= biEnd; ++sbi)
+                sum += ch.paintValues[static_cast<size_t>(sbi)];
+            const float db = sum / static_cast<float>(biEnd - biStart + 1);
+
+            const float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+            const float y    = static_cast<float>(area.getBottom()) - norm * static_cast<float>(area.getHeight());
             if (px == 0)
                 path.startNewSubPath(static_cast<float>(area.getX()), y);
             else
@@ -632,15 +654,12 @@ void CompressorDisplay::paintDetectorCurve(juce::Graphics& g,
     };
 
     if (showUpDetectorCurve) {
-        readFromRing(detectorRing, paintBufDetector.data(), displaySamples);
         g.setColour(kDetectorCurveColour);
-        g.strokePath(buildPath(paintBufDetector), juce::PathStrokeType(2.0f));
+        g.strokePath(buildDetPath(m_detDisplay), juce::PathStrokeType(2.0f));
     }
-
     if (showDownDetectorCurve) {
-        readFromRing(downDetectorRing, paintBufDownDetector.data(), displaySamples);
         g.setColour(kDownDetectorCurveColour);
-        g.strokePath(buildPath(paintBufDownDetector), juce::PathStrokeType(2.0f));
+        g.strokePath(buildDetPath(m_downDetDisplay), juce::PathStrokeType(2.0f));
     }
 }
 
@@ -659,8 +678,8 @@ void CompressorDisplay::paintGainReduction(juce::Graphics& g,
         return;
 
     const float samplesPerPixel    = static_cast<float>(displaySamples) / static_cast<float>(w);
-    const float attenAreaHeight    = area.getHeight() * 0.3f;
-    const float boostAreaHeight    = area.getHeight() * 0.3f;
+    const float attenAreaHeight    = area.getHeight() * kGrOverlayHeightFraction;
+    const float boostAreaHeight    = area.getHeight() * kGrOverlayHeightFraction;
 
     // Helper: average a ring into paintBufAvgDb
     auto avgRing = [&](RingBuffer& ring) {
@@ -848,6 +867,14 @@ void CompressorDisplay::resizeDetDisplayChannel(RmsDisplayChannel& ch,
     if (bpm <= 0.0 || sr <= 0.0 || displayBeats <= 0.0)
         return;
 
+    // Guard against BPM-jitter-induced ring-clear cascade: ceil() shifts by a handful
+    // of samples per tick when BPM has floating-point noise, which makes setWorkingSize
+    // return true on every call and clears the ring before it can fill.
+    //const int desired = static_cast<int>(std::ceil(displayBeats * 60.0 * sr / bpm));
+    //if (ch.rmsRing.workingSize() > 0 &&
+    //    std::abs(desired - ch.rmsRing.workingSize()) <= kRingSizeJitterTolerance)
+    //    return;
+
     if (!ch.rmsRing.setWorkingSize(bpm, sr, displayBeats))
         return;
 
@@ -868,7 +895,7 @@ void CompressorDisplay::insertPacketToChannel(RmsDisplayChannel& ch,
     juce::FloatVectorOperations::multiply(m_rmsSquaredTemp.data(),
                                           packet.data, packet.data, count);
 
-    const phu::audio::WriteResult result =
+    const phu::audio::RingBufferInsertResult result =
         ch.rmsRing.insert(packet.startPpq, m_rmsSquaredTemp.data(), count);
     ch.bucketSet.setDirty(result);
 }
@@ -959,7 +986,15 @@ void CompressorDisplay::paintBeatSyncDetector(juce::Graphics& g,
             int bi = static_cast<int>(static_cast<float>(px) / static_cast<float>(w)
                                       * static_cast<float>(bucketCount));
             bi = juce::jlimit(0, bucketCount - 1, bi);
-            float db   = ch.paintValues[static_cast<size_t>(bi)];
+
+            // Average adjacent buckets (dB domain) to match paintDetectorCurve smoothness.
+            const int biStart = juce::jmax(0, bi - kDetRmsRenderSmoothRadius);
+            const int biEnd   = juce::jmin(bucketCount - 1, bi + kDetRmsRenderSmoothRadius);
+            float sum = 0.0f;
+            for (int sbi = biStart; sbi <= biEnd; ++sbi)
+                sum += ch.paintValues[static_cast<size_t>(sbi)];
+            const float db = sum / static_cast<float>(biEnd - biStart + 1);
+
             float norm = juce::jlimit(0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
             float y    = area.getBottom() - norm * area.getHeight();
             if (px == 0)
@@ -990,10 +1025,10 @@ void CompressorDisplay::paintBeatSyncGainReduction(juce::Graphics& g,
     const int w = juce::jmin(area.getWidth(), kMaxDisplayWidth);
     if (w <= 0) return;
 
-    const float attenAreaHeight = area.getHeight() * 0.3f;
-    const float boostAreaHeight = area.getHeight() * 0.3f;
+    const float attenAreaHeight = area.getHeight() * kGrOverlayHeightFraction;
+    const float boostAreaHeight = area.getHeight() * kGrOverlayHeightFraction;
 
-    auto avgSyncBuf = [&](const BeatSyncBuffer* buf) {
+    auto avgSyncBuf = [&](const BeatSyncBufferF* buf) {
         if (buf == nullptr || buf->size() <= 0) return false;
         const int numBins = buf->size();
         const float* bins = buf->data();

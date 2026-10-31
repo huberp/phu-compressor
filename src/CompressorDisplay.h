@@ -4,13 +4,13 @@
 #include "audio/AudioSampleFifo.h"
 #include "audio/BeatSyncBuffer.h"
 #include "audio/BucketSet.h"
-#include "audio/PpqRingBuffer.h"
+#include "audio/PpqAddressedRingBuffer.h"
 #include "audio/RmsPacketFifo.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using phu::audio::AudioSampleFifo;
-using phu::audio::BeatSyncBuffer;
+using phu::audio::BeatSyncBufferF;
 using phu::audio::RmsPacketFifo;
 using phu::audio::RmsPacket;
 
@@ -32,13 +32,26 @@ class CompressorDisplay : public juce::Component,
     static constexpr int kMaxPullSamples = 8192;
     static constexpr int kMaxDisplayWidth = 4096;
 
-    // dB range for all displays
-    static constexpr float kMinDb = -60.0f;
-    static constexpr float kMaxDb = 0.0f;
-    static constexpr float kGrMaxDb = 24.0f; // max GR/boost display depth in dB
+    // dB range — canonical values live in PluginConstants.h (kDisplayMinDb, kDisplayMaxDb,
+    // kDisplayGrMaxDb). These aliases keep call-sites inside CompressorDisplay concise.
+    static constexpr float kMinDb   = kDisplayMinDb;
+    static constexpr float kMaxDb   = kDisplayMaxDb;
+    static constexpr float kGrMaxDb = kDisplayGrMaxDb;
 
     // Musical time options live in PluginConstants.h (kDisplay*).
     // kDisplayNumRanges, kDisplayBeatFractions, kDisplayBeatLabels.
+
+    // ── Layout constants ───────────────────────────────────────────────────
+    /// Height of the time-selector bar at the bottom of the display (px).
+    static constexpr int kTimeBarHeight = 24;
+    /// Width of the vertical separator between transfer-curve and waveform areas (px).
+    static constexpr int kSeparatorWidth = 2;
+    /// Fraction of the total display width allocated to the transfer-curve panel.
+    static constexpr float kTransferCurveWidthFraction = 0.35f;
+    /// JUCE radio-group ID for the time-selector buttons.
+    static constexpr int kTimeButtonGroupId = 1001;
+    /// Fraction of the waveform area height used for each GR/boost overlay.
+    static constexpr float kGrOverlayHeightFraction = 0.3f;
 
     CompressorDisplay(juce::AudioProcessorValueTreeState& apvts);
     ~CompressorDisplay() override;
@@ -58,9 +71,9 @@ class CompressorDisplay : public juce::Component,
     bool isBeatSyncMode() const { return beatSyncMode; }
 
     /** Point to the processor's beat-sync buffers (call once from editor constructor). */
-    void setBeatSyncBuffers(const BeatSyncBuffer& input,
-                            const BeatSyncBuffer& downGr,
-                            const BeatSyncBuffer& upGr);
+    void setBeatSyncBuffers(const BeatSyncBufferF& input,
+                            const BeatSyncBufferF& downGr,
+                            const BeatSyncBufferF& upGr);
 
     /** Set current playhead PPQ for cursor position (call from timerCallback). */
     void setCurrentPpq(double ppq) { currentPpq = ppq; }
@@ -100,11 +113,9 @@ class CompressorDisplay : public juce::Component,
         int writePos = 0;
         int samplesWritten = 0;
     };
-    RingBuffer inputRing;         // input level in dB (mono)
-    RingBuffer downGrRing;        // downward GR in dB (mono, always ≤ 0)
-    RingBuffer upGrRing;          // upward boost in dB (mono, always ≥ 0)
-    RingBuffer detectorRing;      // up-detector level in dB (mono, raw input)
-    RingBuffer downDetectorRing;  // down-detector level in dB (mono, post-upward boost)
+    RingBuffer inputRing;   // input level in dB (mono)
+    RingBuffer downGrRing;  // downward GR in dB (mono, always ≤ 0)
+    RingBuffer upGrRing;    // upward boost in dB (mono, always ≥ 0)
 
     // Temp pull buffers
     std::array<float, kMaxPullSamples> tempL{};
@@ -112,11 +123,9 @@ class CompressorDisplay : public juce::Component,
     std::array<float, phu::audio::kRmsMaxPacketSamples> m_rmsSquaredTemp{};
 
     // Paint read-out buffers
-    std::array<float, kRingSize> paintBufInput{};
-    std::array<float, kRingSize> paintBufGR{};
-    std::array<float, kRingSize> paintBufUpGR{};
-    std::array<float, kRingSize> paintBufDetector{};
-    std::array<float, kRingSize> paintBufDownDetector{};
+    std::array<float, kRingSize>        paintBufInput{};
+    std::array<float, kRingSize>        paintBufGR{};
+    std::array<float, kRingSize>        paintBufUpGR{};
     std::array<float, kMaxDisplayWidth> paintBufAvgDb{};
 
     // --- Transfer curve cached parameters ---
@@ -137,9 +146,9 @@ class CompressorDisplay : public juce::Component,
 
     // --- Beat-sync state ---
     bool beatSyncMode = false;
-    const BeatSyncBuffer* inputSyncBuf    = nullptr;
-    const BeatSyncBuffer* downGrSyncBuf   = nullptr;
-    const BeatSyncBuffer* upGrSyncBuf     = nullptr;
+    const BeatSyncBufferF* inputSyncBuf    = nullptr;
+    const BeatSyncBufferF* downGrSyncBuf   = nullptr;
+    const BeatSyncBufferF* upGrSyncBuf     = nullptr;
     double currentPpq = 0.0;
     double displayRangeBeats = 4.0;
 
@@ -148,7 +157,7 @@ class CompressorDisplay : public juce::Component,
         RmsDisplayChannel()
             : rmsRing(kMinBPM, kMaxSampleRate, kDisplayMaxBeatFraction)
         {}
-        phu::audio::PpqRingBufferF rmsRing;    // PPQ-indexed ring of linear power (x^2)
+        phu::audio::PpqAddressedRingBufferF rmsRing;    // PPQ-indexed ring of linear power (x^2)
         phu::audio::BucketSet      bucketSet;
         std::vector<float>         paintValues; // one RMS dB value per bucket
     };
@@ -178,11 +187,15 @@ class CompressorDisplay : public juce::Component,
 
     // --- Waveform + GR rendering ---
     void paintWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
-    void paintDetectorCurve(juce::Graphics& g, const juce::Rectangle<int>& area);
+    // Temporal scrolling renderer — reads PPQ ring backwards from currentPpq.
+    void paintScrollingDetectorFromRing(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintDbGrid(juce::Graphics& g, const juce::Rectangle<int>& area, bool isTransferCurve);
 
     // --- Beat-sync rendering helpers ---
+    // Returns displayRangeBeats in beat-sync mode, or the equivalent in beats for the
+    // scrolling window (displayDurationMs × bpm / kMsPerMinute) in non-beat-sync mode.
+    double computeDetectorDisplayBeats() const;
     void resizeDetDisplayChannel(RmsDisplayChannel& ch, double bpm, double sr, double displayBeats);
     void insertPacketToChannel(RmsDisplayChannel& ch, const RmsPacket& packet);
     void computeDirtyBucketMeans(RmsDisplayChannel& ch);

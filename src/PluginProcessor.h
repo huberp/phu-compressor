@@ -9,7 +9,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 using phu::audio::AudioSampleFifo;
-using phu::audio::BeatSyncBuffer;
+using phu::audio::BeatSyncBufferF;
 using phu::audio::RmsPacketFifo;
 using phu::audio::RmsPacket;
 using phu::events::SyncGlobals;
@@ -64,9 +64,9 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     }
 
     // Beat-sync buffer access (read-only pointers for UI)
-    const BeatSyncBuffer& getInputSyncBuffer() const { return m_inputSyncBuf; }
-    const BeatSyncBuffer& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
-    const BeatSyncBuffer& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
+    const BeatSyncBufferF& getInputSyncBuffer() const { return m_inputSyncBuf; }
+    const BeatSyncBufferF& getGRSyncBuffer() const { return m_grSyncBuf; }         // downward GR
+    const BeatSyncBufferF& getUpGRSyncBuffer() const { return m_upGrSyncBuf; }     // upward boost
 
     /** Set the display range in beats (called from UI thread). */
     void setDisplayRangeBeats(double beats) {
@@ -93,6 +93,10 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     static constexpr const char* kParamRmsSyncMode  = "rms_sync_mode";
     static constexpr const char* kParamRmsBeatDiv   = "rms_beat_div";
     static constexpr const char* kParamPeakWindowMs  = "peak_window_ms";
+
+    // Parameter IDs — lookahead (2 new)
+    static constexpr const char* kParamLookaheadEnabled = "lookahead_enabled";
+    static constexpr const char* kParamLookaheadMs      = "lookahead_ms";
 
     // Beat-division fractions and labels live in PluginConstants.h (kDetector*).
     // kDetectorNumDivisions, kDetectorBeatFractions, kDetectorBeatLabels.
@@ -124,6 +128,10 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     std::atomic<float>* rmsBeatDivPtr{nullptr};
     std::atomic<float>* peakWindowMsPtr{nullptr};
 
+    // Lookahead parameter pointers
+    std::atomic<float>* lookaheadEnabledPtr {nullptr};
+    std::atomic<float>* lookaheadMsPtr      {nullptr};
+
     // Lock-free FIFOs for audio→UI data transfer
     AudioSampleFifo<2> m_inputFifo;
     AudioSampleFifo<2> m_gainReductionFifo; // downward GR (linear, ≤ 1.0)
@@ -140,6 +148,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     int    m_accumCount      = 0;
     int    m_accumBlockCount = 0;
     double m_accumStartPpq   = 0.0;
+    /// Last window applied to the detector; 0 sentinel forces update on first block.
+    float  m_lastDetectorWindowMs = 0.0f;
 
     // Temp buffers (reused each processBlock)
     juce::AudioBuffer<float> m_grBuffer;    // downward GR per-sample
@@ -149,9 +159,9 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     SyncGlobals m_syncGlobals;
 
     // Beat-sync position-indexed buffers (written per-sample in processBlock)
-    BeatSyncBuffer m_inputSyncBuf;
-    BeatSyncBuffer m_grSyncBuf;     // downward GR
-    BeatSyncBuffer m_upGrSyncBuf;   // upward boost
+    BeatSyncBufferF m_inputSyncBuf;
+    BeatSyncBufferF m_grSyncBuf;     // downward GR
+    BeatSyncBufferF m_upGrSyncBuf;   // upward boost
     std::atomic<double> m_displayRangeBeats{4.0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PhuCompressorAudioProcessor)

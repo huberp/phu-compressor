@@ -18,6 +18,7 @@ phu-compressor/
 ├── CMakeLists.txt / CMakePresets.json
 ├── docs/                            Screenshots and build guide
 ├── JUCE/                            JUCE 8.0.12 (git submodule)
+├── phu-audio-lib/                   Shared audio/event library (git submodule)
 ├── src/
 │   ├── PluginProcessor.h/cpp        processBlock, OTT compressor, FIFOs,
 │   │                                BeatSyncBuffers, APVTS
@@ -29,17 +30,12 @@ phu-compressor/
 │   ├── PluginConstants.h            Beat-division tables, buffer size constants
 │   └── CMakeLists.txt
 ├── lib/
-│   ├── audio/
-│   │   ├── AudioSampleFifo.h        Lock-free SPSC FIFO (audio→UI)
-│   │   ├── BeatSyncBuffer.h         Position-indexed overwrite buffer
-│   │   ├── BucketSet.h              Dirty-tracked bucket partitioning
-│   │   ├── RmsPacketFifo.h          PPQ-anchored detector level packets
-│   │   ├── PpqRingBuffer.h          PPQ-indexed ring buffer helper
-│   │   └── PacketFifo.h             Generic lock-free packet FIFO
-│   └── events/
-│       ├── SyncGlobals.h            BPM / PPQ / transport state
-│       ├── SyncGlobalsListener.h    Event listener interface
-│       └── Event.h / EventSource.h  Typed event infrastructure
+│   └── audio/
+│       ├── BeatSyncBuffer.h         Position-indexed overwrite buffer
+│       ├── BucketSet.h              Dirty-tracked bucket partitioning
+│       ├── RmsPacketFifo.h          PPQ-anchored detector level packets
+│       ├── PpqRingBuffer.h          PPQ-indexed ring buffer helper
+│       └── PacketFifo.h             Generic lock-free packet FIFO
 ├── .github/workflows/               CI build + pluginval + release workflows
 └── scripts/
     ├── build.bat                    Windows convenience build script

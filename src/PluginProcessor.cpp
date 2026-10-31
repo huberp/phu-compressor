@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "audio/BpmJitterPrevention.h"
 #include <cmath>
 
 PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
@@ -23,6 +24,9 @@ PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
     rmsSyncModePtr  = apvts.getRawParameterValue(kParamRmsSyncMode);
     rmsBeatDivPtr   = apvts.getRawParameterValue(kParamRmsBeatDiv);
     peakWindowMsPtr = apvts.getRawParameterValue(kParamPeakWindowMs);
+
+    lookaheadEnabledPtr = apvts.getRawParameterValue(kParamLookaheadEnabled);
+    lookaheadMsPtr      = apvts.getRawParameterValue(kParamLookaheadMs);
 }
 
 PhuCompressorAudioProcessor::~PhuCompressorAudioProcessor() {
@@ -32,7 +36,7 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = 2;
+    spec.numChannels = kNumStereoChannels;
     compressor.prepare(spec);
 
     m_inputFifo.reset();
@@ -45,15 +49,15 @@ void PhuCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     m_accumStartPpq   = 0.0;
 
     // Pre-allocate temp buffers with headroom — never reallocate on the audio thread
-    const int bufSize = juce::jmax(samplesPerBlock, 8192);
-    m_grBuffer.setSize(2, bufSize);
-    m_upGrBuffer.setSize(2, bufSize);
+    const int bufSize = juce::jmax(samplesPerBlock, kPrepareBufferHeadroom);
+    m_grBuffer.setSize(kNumStereoChannels, bufSize);
+    m_upGrBuffer.setSize(kNumStereoChannels, bufSize);
     m_syncGlobals.updateSampleRate(sampleRate);
 
-    // Beat-sync buffers: 4096 bins for position-indexed display
-    m_inputSyncBuf.prepare(4096);
-    m_grSyncBuf.prepare(4096);
-    m_upGrSyncBuf.prepare(4096);
+    // Beat-sync buffers: kBeatSyncBufferBins bins for position-indexed display
+    m_inputSyncBuf.prepare(kBeatSyncBufferBins);
+    m_grSyncBuf.prepare(kBeatSyncBufferBins);
+    m_upGrSyncBuf.prepare(kBeatSyncBufferBins);
 }
 
 void PhuCompressorAudioProcessor::releaseResources() {
@@ -80,26 +84,43 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     compressor.setUpSnapReleaseMs(upSnapReleasePtr->load());
     compressor.setUpSnapReleaseEnabled(upSnapReleaseEnabledPtr->load() >= 0.5f);
 
+    // Lookahead configuration
+    const bool lookaheadEnabled = lookaheadEnabledPtr->load() >= 0.5f;
+    const float lookaheadMs     = lookaheadMsPtr->load();
+    compressor.setLookaheadEnabled(lookaheadEnabled);
+    compressor.setLookaheadMs(lookaheadMs);
+
+    // Notify the host whenever latency changes
+    setLatencySamples(compressor.getLookaheadSamples());
+
     // Detector configuration
     const int detType = static_cast<int>(detectorTypePtr->load());
     compressor.setDetectorMode(detType == 0 ? DetectorMode::RMS : DetectorMode::PeakMax);
 
+    // Detector configuration — compute desired window then apply only when it
+    // changes by more than the jitter tolerance. The beat-synced path derives
+    // windowMs from DAW BPM which jitters every block; without this guard each
+    // sub-sample BPM fluctuation resets VolumeDetector (runningSum=0, sw=0),
+    // producing permanently unstable RMS output.
+    float newDetectorWindowMs;
     if (detType == 0) {
-        // RMS mode: check BPM sync
-        const bool rmsSynced = rmsSyncModePtr->load() >= 0.5f;
+        const bool rmsSynced = rmsSyncModePtr->load() >= kRmsSyncToggleThreshold;
         if (rmsSynced && m_syncGlobals.getBPM() > 0.0) {
             const int beatIdx = juce::jlimit(0, kDetectorNumDivisions - 1,
                                              static_cast<int>(rmsBeatDivPtr->load()));
             const float beatFrac = kDetectorBeatFractions[beatIdx];
-            const float windowMs = static_cast<float>(
+            newDetectorWindowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
-            // No upper clamp — VolumeDetector buffer supports up to kDetectorMaxWindowMs ms.
-            compressor.setDetectorWindowMs(std::max(1.0f, windowMs));
         } else {
-            compressor.setDetectorWindowMs(rmsWindowMsPtr->load());
+            newDetectorWindowMs = rmsWindowMsPtr->load();
         }
     } else {
-        compressor.setDetectorWindowMs(peakWindowMsPtr->load());
+        newDetectorWindowMs = peakWindowMsPtr->load();
+    }
+    newDetectorWindowMs = std::max(kDetectorMinWindowMs, newDetectorWindowMs);
+    if (phu::compressor::msChangeExceedsTolerance(newDetectorWindowMs, m_lastDetectorWindowMs)) {
+        m_lastDetectorWindowMs = newDetectorWindowMs;
+        compressor.setDetectorWindowMs(newDetectorWindowMs);
     }
 
     const int numChannels = buffer.getNumChannels();
@@ -197,15 +218,15 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 // Input: stereo → mono → abs → dB
                 const float monoIn = (outputPtrs[0][i] + outputPtrs[1][i]) * 0.5f;
                 const float absIn = std::abs(monoIn);
-                const float inDb = (absIn > 1e-10f) ? 20.0f * std::log10(absIn) : -60.0f;
+                const float inDb = (absIn > kLinearNoiseFloor) ? 20.0f * std::log10(absIn) : kDisplayMinDb;
 
                 // Down GR: stereo → min → dB (linear ≤ 1 → negative dB)
                 const float grLin  = std::min(grPtrs[0][i], grPtrs[1][i]);
-                const float grDb   = (grLin > 1e-10f) ? 20.0f * std::log10(grLin) : -24.0f;
+                const float grDb   = (grLin > kLinearNoiseFloor) ? 20.0f * std::log10(grLin) : -kDisplayGrMaxDb;
 
                 // Up boost: stereo → max → dB (linear ≥ 1 → positive dB)
                 const float upLin  = std::max(upGrPtrs[0][i], upGrPtrs[1][i]);
-                const float upDb   = (upLin > 1e-10f) ? 20.0f * std::log10(upLin) : 0.0f;
+                const float upDb   = (upLin > kLinearNoiseFloor) ? 20.0f * std::log10(upLin) : 0.0f;
 
                 m_inputSyncBuf.write(normPos, inDb);
                 m_grSyncBuf.write(normPos, grDb);
@@ -315,10 +336,10 @@ PhuCompressorAudioProcessor::createParameterLayout() {
         juce::ParameterID{kParamUpAttack, 1}, "Up Attack (ms)",
         juce::NormalisableRange<float>(0.01f, 1000.0f, 0.01f, 0.35f), 10.0f));
 
-    // Up Release: 0.1 ms to 2000 ms, default 100 ms
+    // Up Release: 0.1 ms to 2000 ms, default 25 ms
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamUpRelease, 1}, "Up Release (ms)",
-        juce::NormalisableRange<float>(0.1f, 2000.0f, 0.01f, 0.5f), 100.0f));
+        juce::NormalisableRange<float>(0.1f, 2000.0f, 0.01f, 0.5f), 25.0f));
 
     // Up Snap Release enabled: default off
     layout.add(std::make_unique<juce::AudioParameterBool>(
@@ -328,6 +349,15 @@ PhuCompressorAudioProcessor::createParameterLayout() {
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{kParamUpSnapRelease, 1}, "Up Snap Release (ms)",
         juce::NormalisableRange<float>(0.5f, 50.0f, 0.1f, 0.5f), 5.0f));
+
+    // Lookahead enabled: default off
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{kParamLookaheadEnabled, 1}, "Lookahead On", false));
+
+    // Lookahead time: 0.5 ms to 20 ms, default 3 ms
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kParamLookaheadMs, 1}, "Lookahead (ms)",
+        juce::NormalisableRange<float>(0.5f, 20.0f, 0.1f, 0.5f), 3.0f));
 
     // ── Detector parameters ──────────────────────────────────────────────
 
