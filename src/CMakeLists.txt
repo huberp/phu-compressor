@@ -1,7 +1,15 @@
+# Semicolon-separated JUCE formats; set by the "formats-*" presets in CMakePresets.json.
+if(APPLE)
+    set(_phu_default_formats "VST3;AU")
+else()
+    set(_phu_default_formats "VST3")
+endif()
+set(PHU_PLUGIN_FORMATS "${_phu_default_formats}" CACHE STRING "JUCE plugin formats to build (e.g. \"VST3;AU\")")
+
 juce_add_plugin(phu-compressor
     PLUGIN_MANUFACTURER_CODE Phub
     PLUGIN_CODE Pcmp
-    FORMATS VST3
+    FORMATS ${PHU_PLUGIN_FORMATS}
     PRODUCT_NAME "PHU COMPRESSOR"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -20,16 +28,6 @@ target_sources(phu-compressor PRIVATE
     CompressorStage.h
     CompressorDisplay.cpp
     CompressorDisplay.h
-)
-
-target_compile_definitions(phu-compressor PUBLIC
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_USE_CAMERA=0
-    JUCE_USE_MP3AUDIOFORMAT=0
-    JUCE_USE_OGGVORBIS=0
-    JUCE_USE_FLAC=0
 )
 
 target_link_libraries(phu-compressor

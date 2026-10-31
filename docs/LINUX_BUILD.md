@@ -44,9 +44,11 @@ For Arch Linux, Fedora, or other distributions, install the equivalent packages 
 ### Using CMake Presets (Recommended)
 
 ```bash
-cmake --preset linux-release
-cmake --build --preset linux-build
+cmake --preset linux-x64-vst3-release
+cmake --build --preset linux-x64-vst3-release-build
 ```
+
+JUCE and phu-audio-lib are fetched by CMake into `JUCE/` and `phu-audio-lib/` during the first configure (network access to GitHub required).
 
 ### Manual Build
 
@@ -61,7 +63,7 @@ cmake --build . --target phu-compressor_VST3
 
 The built VST3 plugin will be located at:
 ```
-build/linux-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3/
+build/linux-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3/
 ```
 
 ## Installation
@@ -69,7 +71,7 @@ build/linux-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst
 Copy the VST3 to your system VST3 directory:
 
 ```bash
-cp -r "build/linux-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3" \
+cp -r "build/linux-x64-vst3-release/src/phu-compressor_artefacts/Release/VST3/PHU COMPRESSOR.vst3" \
     ~/.vst3/
 ```
 
@@ -83,18 +85,14 @@ If CMake fails with dependency errors, ensure all JUCE dependencies are installe
 sudo bash scripts/install-linux-deps.sh
 ```
 
-### Submodules Not Initialized
+### Dependency Fetch Failed
 
-If you get JUCE-related errors:
-
-```bash
-git submodule update --init --recursive
-```
+JUCE and phu-audio-lib are downloaded by CMake during configure. If you get JUCE-related errors, check network access to GitHub, then delete the incomplete `JUCE/` / `phu-audio-lib/` directory and re-run the configure step.
 
 ### Build Timeouts
 
 For resource-constrained systems, use fewer parallel jobs:
 
 ```bash
-cmake --build --preset linux-build -j2
+cmake --build --preset linux-x64-vst3-release-build -j2
 ```

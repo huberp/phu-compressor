@@ -11,10 +11,11 @@
 ::   dist\PHU-COMPRESSOR-windows-<version>.zip
 ::
 :: Requirements:
-::   - CMake 3.23+ on PATH
+::   - CMake 3.28+ on PATH
 ::   - PowerShell 5+ (included with Windows 10/11, used for zipping)
-::   - Visual Studio 2022 (or 2026) with Desktop C++ workload installed
-::   - JUCE submodule initialised:  git submodule update --init --recursive
+::   - Visual Studio 2026 with Desktop C++ workload installed
+::   - Network access to GitHub on first configure (JUCE and phu-audio-lib
+::     are fetched by CMake)
 :: ---------------------------------------------------------------------------
 setlocal EnableExtensions EnableDelayedExpansion
 
@@ -36,27 +37,17 @@ echo.
 where cmake >nul 2>&1
 if errorlevel 1 (
     echo ERROR: cmake not found on PATH.
-    echo Please install CMake 3.23+ and add it to your PATH.
+    echo Please install CMake 3.28+ and add it to your PATH.
     exit /b 1
 )
 
 :: ---- Navigate to repo root -------------------------------------------------
 pushd "%~dp0\.."
 
-:: ---- Check submodule -------------------------------------------------------
-if not exist "JUCE\CMakeLists.txt" (
-    echo WARNING: JUCE submodule appears uninitialised. Running:
-    echo   git submodule update --init --recursive
-    git submodule update --init --recursive
-    if errorlevel 1 (
-        echo ERROR: Failed to initialise JUCE submodule.
-        popd & exit /b 1
-    )
-)
-
 :: ---- Configure -------------------------------------------------------------
-echo [1/3] Configuring (preset: vs2026-x64) ...
-cmake --preset vs2026-x64
+echo [1/3] Configuring (preset: windows-x64-vst3-release) ...
+echo       (first configure fetches JUCE and phu-audio-lib - network required)
+cmake --preset windows-x64-vst3-release
 if errorlevel 1 (
     echo ERROR: CMake configuration failed.
     popd & exit /b 1
@@ -65,7 +56,7 @@ if errorlevel 1 (
 :: ---- Build Release ---------------------------------------------------------
 echo.
 echo [2/3] Building Release ...
-cmake --build --preset release
+cmake --build --preset windows-x64-vst3-release-build
 if errorlevel 1 (
     echo ERROR: Build failed.
     popd & exit /b 1
@@ -75,7 +66,7 @@ if errorlevel 1 (
 echo.
 echo [3/3] Packaging ...
 
-set "ARTEFACTS=build\vs2026-x64\src\phu-compressor_artefacts\Release\VST3"
+set "ARTEFACTS=build\windows-x64-vst3-release\src\phu-compressor_artefacts\Release\VST3"
 set "DIST_DIR=dist"
 
 :: Create dist directory

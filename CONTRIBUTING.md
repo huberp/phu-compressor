@@ -3,7 +3,7 @@
 Contributions are welcome.
 
 1. Fork and branch from `main`
-2. Follow existing C++17/JUCE code style
+2. Follow existing C++20/JUCE code style
 3. No memory allocation, system calls, or locks on the audio thread
 4. Verify the project builds and passes pluginval before opening a PR
 
@@ -16,9 +16,13 @@ Contributions are welcome.
 ```
 phu-compressor/
 ├── CMakeLists.txt / CMakePresets.json
+├── cmake/
+│   ├── PhuDependencies.cmake        FetchContent helpers for JUCE and phu-audio-lib
+│   ├── juce_config.cmake            JUCE feature flags and build options
+│   └── compiler_flags.cmake         Optional warnings / sanitizers / coverage
 ├── docs/                            Screenshots and build guide
-├── JUCE/                            JUCE 8.0.12 (git submodule)
-├── phu-audio-lib/                   Shared audio/event library (git submodule)
+├── JUCE/                            JUCE 9.0.0, fetched by CMake (git-ignored)
+├── phu-audio-lib/                   Shared audio/event library, fetched by CMake (git-ignored)
 ├── src/
 │   ├── PluginProcessor.h/cpp        processBlock, OTT compressor, FIFOs,
 │   │                                BeatSyncBuffers, APVTS
@@ -42,6 +46,16 @@ phu-compressor/
     ├── release.bat                  Windows release packaging script
     └── install-linux-deps.sh        Installs JUCE Linux dependencies
 ```
+
+---
+
+## Building
+
+JUCE and phu-audio-lib are downloaded automatically by CMake during the first configure (network access to GitHub required); there are no submodules to initialise. To work against a local checkout of the shared library, configure with `-DFETCHCONTENT_SOURCE_DIR_PHU-AUDIO-LIB=<path>`; to stop CMake from touching the network on later configures, use `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`.
+
+Presets follow `<os>-<arch>-<format>-<config>` (macOS omits the format and builds VST3 + AU); every configure preset has a matching `-build` preset. Examples: `windows-x64-vst3-release`, `linux-x64-vst3-release`, `macos-arm64-release`. See `cmake --list-presets=all` and the [README](README.md#building).
+
+Optional CMake options (see `cmake/compiler_flags.cmake`): `-DENABLE_STRICT_WARNINGS=ON` for strict compiler warnings, plus the `sanitizers` (Address + UB sanitizers) and `coverage` presets.
 
 ---
 
