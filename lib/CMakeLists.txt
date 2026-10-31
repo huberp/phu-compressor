@@ -7,6 +7,8 @@ target_include_directories(CompressorLib INTERFACE
 
 target_sources(CompressorLib INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/RmsPacketFifo.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/audio/BpmJitterPrevention.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/audio/Constants.h
 )
 
 target_link_libraries(CompressorLib INTERFACE PhuAudioLib)

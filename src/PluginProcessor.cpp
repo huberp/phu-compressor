@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "audio/BpmJitterPrevention.h"
 #include <cmath>
 
 PhuCompressorAudioProcessor::PhuCompressorAudioProcessor()
@@ -96,22 +97,30 @@ void PhuCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const int detType = static_cast<int>(detectorTypePtr->load());
     compressor.setDetectorMode(detType == 0 ? DetectorMode::RMS : DetectorMode::PeakMax);
 
+    // Detector configuration — compute desired window then apply only when it
+    // changes by more than the jitter tolerance. The beat-synced path derives
+    // windowMs from DAW BPM which jitters every block; without this guard each
+    // sub-sample BPM fluctuation resets VolumeDetector (runningSum=0, sw=0),
+    // producing permanently unstable RMS output.
+    float newDetectorWindowMs;
     if (detType == 0) {
-        // RMS mode: check BPM sync
         const bool rmsSynced = rmsSyncModePtr->load() >= kRmsSyncToggleThreshold;
         if (rmsSynced && m_syncGlobals.getBPM() > 0.0) {
             const int beatIdx = juce::jlimit(0, kDetectorNumDivisions - 1,
                                              static_cast<int>(rmsBeatDivPtr->load()));
             const float beatFrac = kDetectorBeatFractions[beatIdx];
-            const float windowMs = static_cast<float>(
+            newDetectorWindowMs = static_cast<float>(
                 (static_cast<double>(beatFrac) / m_syncGlobals.getBPM()) * 60000.0);
-            // No upper clamp — VolumeDetector buffer supports up to kDetectorMaxWindowMs ms.
-            compressor.setDetectorWindowMs(std::max(kDetectorMinWindowMs, windowMs));
         } else {
-            compressor.setDetectorWindowMs(rmsWindowMsPtr->load());
+            newDetectorWindowMs = rmsWindowMsPtr->load();
         }
     } else {
-        compressor.setDetectorWindowMs(peakWindowMsPtr->load());
+        newDetectorWindowMs = peakWindowMsPtr->load();
+    }
+    newDetectorWindowMs = std::max(kDetectorMinWindowMs, newDetectorWindowMs);
+    if (phu::compressor::msChangeExceedsTolerance(newDetectorWindowMs, m_lastDetectorWindowMs)) {
+        m_lastDetectorWindowMs = newDetectorWindowMs;
+        compressor.setDetectorWindowMs(newDetectorWindowMs);
     }
 
     const int numChannels = buffer.getNumChannels();

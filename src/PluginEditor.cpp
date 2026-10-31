@@ -3,7 +3,6 @@
 
 // ── Editor layout / style constants ──────────────────────────────────────────
 static constexpr int   kEditorWidth          = 800;
-static constexpr int   kEditorHeight         = 644;
 static constexpr int   kTimerHz              = 60;
 static constexpr int   kTitleHeight          = 28;
 static constexpr float kTitleFontSize        = 14.0f;
@@ -11,6 +10,27 @@ static constexpr float kLabelFontSize        = 11.0f;
 static constexpr float kInfoLabelFontSize    =  9.0f;
 static constexpr int   kSliderTextBoxWidth   = 50;
 static constexpr int   kSliderTextBoxHeight  = 20;
+// ── Layout geometry shared by resized() and height helpers ───────────────────
+static constexpr int   kReduceMargin  = 10;
+static constexpr int   kRowHeight     = 24;
+static constexpr int   kRowGap        =  3;
+static constexpr int   kGroupPaddingV = 18;
+static constexpr int   kGroupPaddingH = 10;
+static constexpr int   kGroupSpacing  =  8;
+static constexpr int   kLabelWidth    = 80;
+static constexpr int   kSliderColWidth = 250;
+
+static constexpr int kDownwardGroupRows = 5;
+static constexpr int kUpwardBaseRows = 6;
+static constexpr int kUpwardSnapRows = 1;
+static constexpr int kDetectorRmsBaseRows = 4;
+static constexpr int kDetectorPeakBaseRows = 2;
+static constexpr int kDetectorLookaheadBaseRows = 1;
+static constexpr int kDetectorLookaheadExpandedRows = 2;
+
+static constexpr int groupHeight(int n) noexcept {
+    return 2 * kGroupPaddingV + n * kRowHeight + (n > 1 ? (n - 1) * kRowGap : 0);
+}
 
 static void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text,
                         juce::Component* parent) {
@@ -48,11 +68,6 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
                                      upSnapReleaseEnabledToggle),
       upSnapReleaseAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamUpSnapRelease,
                               upSnapReleaseSlider),
-      lookaheadEnabledAttachment(p.getAPVTS(),
-                                 PhuCompressorAudioProcessor::kParamLookaheadEnabled,
-                                 lookaheadEnabledToggle),
-      lookaheadMsAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamLookaheadMs,
-                            lookaheadMsSlider),
       detectorTypeAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamDetectorType,
                              detectorTypeCombo),
       rmsWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsWindowMs,
@@ -61,8 +76,13 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
                         rmsSyncToggle),
       rmsBeatDivAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamRmsBeatDiv,
                            rmsBeatDivCombo),
-      peakWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamPeakWindowMs,
-                           peakWindowSlider) {
+        peakWindowAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamPeakWindowMs,
+                       peakWindowSlider),
+        lookaheadEnabledAttachment(p.getAPVTS(),
+                           PhuCompressorAudioProcessor::kParamLookaheadEnabled,
+                           lookaheadEnabledToggle),
+        lookaheadMsAttachment(p.getAPVTS(), PhuCompressorAudioProcessor::kParamLookaheadMs,
+                        lookaheadMsSlider) {
     setupSlider(downThreshSlider, downThreshLabel, "Thresh (dB)", this);
     setupSlider(downRatioSlider, downRatioLabel, "Ratio", this);
     setupSlider(downAttackSlider, downAttackLabel, "Attack (ms)", this);
@@ -91,36 +111,6 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
         upSnapReleaseSlider.setVisible(snapOn);
         upSnapReleaseLabel.setVisible(snapOn);
     }
-
-    // Lookahead toggle
-    lookaheadEnabledToggle.setButtonText("Lookahead");
-    addAndMakeVisible(lookaheadEnabledToggle);
-
-    // Lookahead time slider
-    setupSlider(lookaheadMsSlider, lookaheadMsLabel, "Ahead (ms)", this);
-
-    // Lookahead latency readout label
-    lookaheadLatencyLabel.setJustificationType(juce::Justification::centredLeft);
-    lookaheadLatencyLabel.setFont(juce::FontOptions(kInfoLabelFontSize));
-    lookaheadLatencyLabel.setColour(juce::Label::textColourId,
-                                    juce::Colours::white.withAlpha(0.6f));
-    addAndMakeVisible(lookaheadLatencyLabel);
-
-    // Initial visibility: match the loaded parameter state
-    {
-        const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
-        lookaheadMsSlider.setVisible(lookaheadOn);
-        lookaheadMsLabel.setVisible(lookaheadOn);
-        lookaheadLatencyLabel.setVisible(lookaheadOn);
-    }
-
-    lookaheadEnabledToggle.onClick = [this]() {
-        const bool on = lookaheadEnabledToggle.getToggleState();
-        lookaheadMsSlider.setVisible(on);
-        lookaheadMsLabel.setVisible(on);
-        lookaheadLatencyLabel.setVisible(on);
-        resized();
-    };
 
     // Detector type combo
     detectorTypeLabel.setText("Type", juce::dontSendNotification);
@@ -160,6 +150,32 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
 
     // Peak window slider
     setupSlider(peakWindowSlider, peakWindowLabel, "Window (ms)", this);
+
+    // Lookahead controls (detector/timing domain)
+    lookaheadEnabledToggle.setButtonText("Lookahead");
+    addAndMakeVisible(lookaheadEnabledToggle);
+    setupSlider(lookaheadMsSlider, lookaheadMsLabel, "Ahead (ms)", this);
+
+    lookaheadLatencyLabel.setJustificationType(juce::Justification::centredLeft);
+    lookaheadLatencyLabel.setFont(juce::FontOptions(kInfoLabelFontSize));
+    lookaheadLatencyLabel.setColour(juce::Label::textColourId,
+                                    juce::Colours::white.withAlpha(0.6f));
+    addAndMakeVisible(lookaheadLatencyLabel);
+
+    {
+        const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+        lookaheadMsSlider.setVisible(lookaheadOn);
+        lookaheadMsLabel.setVisible(lookaheadOn);
+        lookaheadLatencyLabel.setVisible(lookaheadOn);
+    }
+
+    lookaheadEnabledToggle.onClick = [this]() {
+        const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+        lookaheadMsSlider.setVisible(lookaheadOn);
+        lookaheadMsLabel.setVisible(lookaheadOn);
+        lookaheadLatencyLabel.setVisible(lookaheadOn);
+        resized();
+    };
 
     // RMS info readout label
     rmsInfoLabel.setJustificationType(juce::Justification::centred);
@@ -229,7 +245,7 @@ PhuCompressorAudioProcessorEditor::PhuCompressorAudioProcessorEditor(
 
     updateDetectorControlVisibility();
 
-    setSize(kEditorWidth, kEditorHeight);
+    setSize(kEditorWidth, computeRequiredEditorHeight());
     startTimerHz(kTimerHz);
 }
 
@@ -247,7 +263,9 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
         rmsSyncToggle.isVisible()   != isRms                ||
         rmsBeatDivCombo.isVisible() != (isRms && isSynced)  ||
         peakWindowSlider.isVisible()!= (!isRms)             ||
-        rmsInfoLabel.isVisible()    != isRms;
+        rmsInfoLabel.isVisible()    != isRms                ||
+        lookaheadMsSlider.isVisible()!= lookaheadEnabledToggle.getToggleState() ||
+        lookaheadLatencyLabel.isVisible()!= lookaheadEnabledToggle.getToggleState();
 
     rmsWindowSlider.setVisible(isRms && !isSynced);
     rmsWindowLabel.setVisible(isRms && !isSynced);
@@ -257,6 +275,11 @@ void PhuCompressorAudioProcessorEditor::updateDetectorControlVisibility() {
     peakWindowSlider.setVisible(!isRms);
     peakWindowLabel.setVisible(!isRms);
     rmsInfoLabel.setVisible(isRms);
+
+    const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+    lookaheadMsSlider.setVisible(lookaheadOn);
+    lookaheadMsLabel.setVisible(lookaheadOn);
+    lookaheadLatencyLabel.setVisible(lookaheadOn);
 
     if (visChanged)
         resized();
@@ -268,13 +291,18 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
     compressorDisplay.setSampleRate(syncGlobals.getSampleRate() > 0
                                         ? syncGlobals.getSampleRate()
                                         : kFallbackSampleRate);
-    compressorDisplay.setBPM(syncGlobals.getBPM());
-
-    // Beat-sync: pass PPQ and keep display range in sync with processor
-    if (compressorDisplay.isBeatSyncMode()) {
-        compressorDisplay.setCurrentPpq(syncGlobals.getPpqEndOfBlock());
-        audioProcessor.setDisplayRangeBeats(compressorDisplay.getDisplayRangeBeats());
+    const double newBpm = syncGlobals.getBPM();
+    if (phu::compressor::bpmChangeExceedsTolerance(newBpm, m_lastBpm)) {
+        m_lastBpm = newBpm;
+        compressorDisplay.setBPM(newBpm);
     }
+
+    // Always update PPQ — required by both the beat-sync positional and scrolling temporal renderers.
+    compressorDisplay.setCurrentPpq(syncGlobals.getPpqEndOfBlock());
+
+    // Keep processor display range in sync with the time selector when beat-sync is active.
+    if (compressorDisplay.isBeatSyncMode())
+        audioProcessor.setDisplayRangeBeats(compressorDisplay.getDisplayRangeBeats());
 
     // Pull data from FIFOs and repaint
     compressorDisplay.updateFromFifos(audioProcessor.getInputFifo(),
@@ -310,6 +338,35 @@ void PhuCompressorAudioProcessorEditor::timerCallback() {
     }
 }
 
+// ── Group-height helpers ──────────────────────────────────────────────────────
+
+int PhuCompressorAudioProcessorEditor::computeDownwardGroupHeight() const {
+    return groupHeight(kDownwardGroupRows);
+}
+
+int PhuCompressorAudioProcessorEditor::computeUpwardGroupHeight() const {
+    int rows = kUpwardBaseRows;
+    if (upSnapReleaseEnabledToggle.getToggleState()) rows += kUpwardSnapRows;
+    return groupHeight(rows);
+}
+
+int PhuCompressorAudioProcessorEditor::computeDetectorGroupHeight() const {
+    const bool isRms = detectorTypeCombo.getSelectedItemIndex() == 0;
+    int rows = isRms ? kDetectorRmsBaseRows : kDetectorPeakBaseRows;
+    rows += kDetectorLookaheadBaseRows;
+    if (lookaheadEnabledToggle.getToggleState()) rows += kDetectorLookaheadExpandedRows;
+    return groupHeight(rows);
+}
+
+int PhuCompressorAudioProcessorEditor::computeRequiredEditorHeight() const {
+    return 2 * kReduceMargin + kTitleHeight
+        + computeDownwardGroupHeight() + kGroupSpacing
+        + computeUpwardGroupHeight()   + kGroupSpacing
+        + computeDetectorGroupHeight() + kGroupSpacing
+        + kRowHeight + kRowGap   // GR curve toggles row
+        + kRowHeight;            // Beat Sync toggle
+}
+
 void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 
@@ -320,28 +377,16 @@ void PhuCompressorAudioProcessorEditor::paint(juce::Graphics& g) {
 }
 
 void PhuCompressorAudioProcessorEditor::resized() {
-    auto area = getLocalBounds().reduced(10);
-    area.removeFromTop(kTitleHeight); // Title
+    if (const int req = computeRequiredEditorHeight(); getHeight() != req)
+        { setSize(kEditorWidth, req); return; }
 
-    // ── Layout constants (aligned with phu-splitter style) ────────────────
-    constexpr int kRowHeight = 24;
-    constexpr int kRowGap = 3;
-    constexpr int kGroupPaddingV = 18;
-    constexpr int kGroupPaddingH = 10;
-    constexpr int kGroupSpacing = 8;
-    constexpr int kLabelWidth = 80;
+    auto area = getLocalBounds().reduced(kReduceMargin);
+    area.removeFromTop(kTitleHeight);
 
-    const int sliderColumnWidth = 250;
-    auto sliderArea = area.removeFromLeft(sliderColumnWidth);
-
-    // Helper: compute group height for N rows of controls
-    auto computeGroupHeight = [&](int numRows) {
-        int contentHeight = numRows * kRowHeight + (numRows > 1 ? (numRows - 1) * kRowGap : 0);
-        return 2 * kGroupPaddingV + contentHeight;
-    };
+    auto sliderArea = area.removeFromLeft(kSliderColWidth);
 
     // ── Downward group (4 sliders + detector toggle = 5 rows) ───────────────
-    auto downGroupArea = sliderArea.removeFromTop(computeGroupHeight(5));
+    auto downGroupArea = sliderArea.removeFromTop(computeDownwardGroupHeight());
     downwardGroup.setBounds(downGroupArea);
     {
         auto content = downGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -361,13 +406,9 @@ void PhuCompressorAudioProcessorEditor::resized() {
     }
     sliderArea.removeFromTop(kGroupSpacing);
 
-    // ── Upward group: thresh + ratio + attack + release + snapToggle + [snapSlider] + lookaheadToggle + [lookaheadSlider + latencyLabel] + detectorToggle ──
+    // ── Upward group: thresh + ratio + attack + release + snapToggle + [snapSlider] + detectorToggle ──
     const bool snapEnabled = upSnapReleaseEnabledToggle.getToggleState();
-    const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
-    int upRows = 7; // base: thresh, ratio, attack, release, snapToggle, lookaheadToggle, detectorToggle
-    if (snapEnabled)  upRows += 1; // snap release slider
-    if (lookaheadOn)  upRows += 2; // lookahead slider + latency label
-    auto upGroupArea = sliderArea.removeFromTop(computeGroupHeight(upRows));
+    auto upGroupArea = sliderArea.removeFromTop(computeUpwardGroupHeight());
     upwardGroup.setBounds(upGroupArea);
     {
         auto content = upGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -388,17 +429,6 @@ void PhuCompressorAudioProcessorEditor::resized() {
         // Snap release slider (visible only when enabled)
         if (snapEnabled)
             layoutRow(upSnapReleaseLabel, upSnapReleaseSlider);
-        // Lookahead toggle (always visible inside the group)
-        auto lookaheadToggleRow = content.removeFromTop(kRowHeight);
-        lookaheadEnabledToggle.setBounds(lookaheadToggleRow);
-        content.removeFromTop(kRowGap);
-        // Lookahead slider + latency label (visible only when enabled)
-        if (lookaheadOn) {
-            layoutRow(lookaheadMsLabel, lookaheadMsSlider);
-            auto latRow = content.removeFromTop(kRowHeight);
-            lookaheadLatencyLabel.setBounds(latRow);
-            content.removeFromTop(kRowGap);
-        }
         // Detector level toggle
         auto toggleRow = content.removeFromTop(kRowHeight);
         showUpDetectorToggle.setBounds(toggleRow);
@@ -406,16 +436,11 @@ void PhuCompressorAudioProcessorEditor::resized() {
     sliderArea.removeFromTop(kGroupSpacing);
 
     // ── Detector group (dynamic rows based on selected type) ────────────
-    const int detType  = detectorTypeCombo.getSelectedItemIndex(); // 0=RMS, 1=Peak
-    const bool isRms   = (detType == 0);
+    const int detType   = detectorTypeCombo.getSelectedItemIndex();
+    const bool isRms    = (detType == 0);
     const bool isSynced = rmsSyncToggle.getToggleState();
-    // Peak: Type + Window = 2 rows
-    // RMS unsynced: Type + Window + Sync = 3 rows
-    // RMS synced:   Type + Sync + Beat Div = 3 rows
-    // RMS (any):    +1 row for info label below beat div / sync toggle
-    const int detRows  = isRms ? 4 : 2;
-
-    auto detGroupArea = sliderArea.removeFromTop(computeGroupHeight(detRows));
+    const bool lookaheadOn = lookaheadEnabledToggle.getToggleState();
+    auto detGroupArea   = sliderArea.removeFromTop(computeDetectorGroupHeight());
     detectorGroup.setBounds(detGroupArea);
     {
         auto content = detGroupArea.reduced(kGroupPaddingH, kGroupPaddingV);
@@ -446,6 +471,15 @@ void PhuCompressorAudioProcessorEditor::resized() {
         if (isRms) {
             auto row = content.removeFromTop(kRowHeight);
             rmsInfoLabel.setBounds(row);
+        }
+        auto lookaheadToggleRow = content.removeFromTop(kRowHeight);
+        lookaheadEnabledToggle.setBounds(lookaheadToggleRow);
+        content.removeFromTop(kRowGap);
+        if (lookaheadOn) {
+            layoutSliderRow(lookaheadMsLabel, lookaheadMsSlider);
+            auto latRow = content.removeFromTop(kRowHeight);
+            lookaheadLatencyLabel.setBounds(latRow);
+            content.removeFromTop(kRowGap);
         }
     }
     sliderArea.removeFromTop(kGroupSpacing);

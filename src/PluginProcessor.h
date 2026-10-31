@@ -148,6 +148,8 @@ class PhuCompressorAudioProcessor : public juce::AudioProcessor {
     int    m_accumCount      = 0;
     int    m_accumBlockCount = 0;
     double m_accumStartPpq   = 0.0;
+    /// Last window applied to the detector; 0 sentinel forces update on first block.
+    float  m_lastDetectorWindowMs = 0.0f;
 
     // Temp buffers (reused each processBlock)
     juce::AudioBuffer<float> m_grBuffer;    // downward GR per-sample

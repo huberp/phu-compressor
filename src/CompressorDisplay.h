@@ -113,11 +113,9 @@ class CompressorDisplay : public juce::Component,
         int writePos = 0;
         int samplesWritten = 0;
     };
-    RingBuffer inputRing;         // input level in dB (mono)
-    RingBuffer downGrRing;        // downward GR in dB (mono, always ≤ 0)
-    RingBuffer upGrRing;          // upward boost in dB (mono, always ≥ 0)
-    RingBuffer detectorRing;      // up-detector level in dB (mono, raw input)
-    RingBuffer downDetectorRing;  // down-detector level in dB (mono, post-upward boost)
+    RingBuffer inputRing;   // input level in dB (mono)
+    RingBuffer downGrRing;  // downward GR in dB (mono, always ≤ 0)
+    RingBuffer upGrRing;    // upward boost in dB (mono, always ≥ 0)
 
     // Temp pull buffers
     std::array<float, kMaxPullSamples> tempL{};
@@ -125,11 +123,9 @@ class CompressorDisplay : public juce::Component,
     std::array<float, phu::audio::kRmsMaxPacketSamples> m_rmsSquaredTemp{};
 
     // Paint read-out buffers
-    std::array<float, kRingSize> paintBufInput{};
-    std::array<float, kRingSize> paintBufGR{};
-    std::array<float, kRingSize> paintBufUpGR{};
-    std::array<float, kRingSize> paintBufDetector{};
-    std::array<float, kRingSize> paintBufDownDetector{};
+    std::array<float, kRingSize>        paintBufInput{};
+    std::array<float, kRingSize>        paintBufGR{};
+    std::array<float, kRingSize>        paintBufUpGR{};
     std::array<float, kMaxDisplayWidth> paintBufAvgDb{};
 
     // --- Transfer curve cached parameters ---
@@ -191,11 +187,15 @@ class CompressorDisplay : public juce::Component,
 
     // --- Waveform + GR rendering ---
     void paintWaveform(juce::Graphics& g, const juce::Rectangle<int>& area);
-    void paintDetectorCurve(juce::Graphics& g, const juce::Rectangle<int>& area);
+    // Temporal scrolling renderer — reads PPQ ring backwards from currentPpq.
+    void paintScrollingDetectorFromRing(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintGainReduction(juce::Graphics& g, const juce::Rectangle<int>& area);
     void paintDbGrid(juce::Graphics& g, const juce::Rectangle<int>& area, bool isTransferCurve);
 
     // --- Beat-sync rendering helpers ---
+    // Returns displayRangeBeats in beat-sync mode, or the equivalent in beats for the
+    // scrolling window (displayDurationMs × bpm / kMsPerMinute) in non-beat-sync mode.
+    double computeDetectorDisplayBeats() const;
     void resizeDetDisplayChannel(RmsDisplayChannel& ch, double bpm, double sr, double displayBeats);
     void insertPacketToChannel(RmsDisplayChannel& ch, const RmsPacket& packet);
     void computeDirtyBucketMeans(RmsDisplayChannel& ch);
