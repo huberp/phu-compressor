@@ -33,7 +33,7 @@ apt-get install -y \
     libxext-dev \
     libxinerama-dev \
     libxrandr-dev \
-    libxrender-dev \ 
+    libxrender-dev \
     libxi-dev
 
 # JUCE GL dependenciey
